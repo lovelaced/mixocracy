@@ -1,0 +1,21 @@
+[
+  "function registerDj(address djAddress)",
+  "function addSong(string songName)",
+  "function vote(address djAddress, uint256 songId)",
+  "function getVotes(address djAddress, uint256 songId) view returns (uint256)",
+  "function getSong(address djAddress, uint256 songId) view returns (string)",
+  "function getSongCount(address djAddress) view returns (uint256)",
+  "function isDj(address djAddress) view returns (bool)",
+  "function removeDj(address djAddress)",
+  "function clearVotes(address djAddress, uint256 songId)",
+  "function hasVoted(address voter, address djAddress, uint256 songId) view returns (bool)",
+  "function startSet(address djAddress)",
+  "function stopSet(address djAddress)",
+  "function isSetActive(address djAddress) view returns (bool)",
+  "function getActiveDjs() view returns (address[])",
+  "function getSongsWithVotes(address djAddress) view returns (tuple(uint256 id, string name, uint256 votes)[])",
+  "function getTopSongs(address djAddress, uint256 limit) view returns (tuple(uint256 id, string name, uint256 votes)[])",
+  "function setDjMetadata(address djAddress, string metadata)",
+  "function getDjMetadata(address djAddress) view returns (string)",
+  "function getDjInfo(address djAddress) view returns (tuple(bool isRegistered, bool isActive, uint256 startTime, uint256 songCount, string metadata))"
+]

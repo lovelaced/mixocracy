@@ -1,0 +1,19 @@
+{
+  "name": "mixocracy-deployment",
+  "version": "1.0.0",
+  "description": "Deployment scripts for Mixocracy live DJ voting contract",
+  "main": "deploy_mixocracy.ts",
+  "scripts": {
+    "deploy": "ts-node deploy_mixocracy.ts",
+    "build-contract": "./build.sh"
+  },
+  "dependencies": {
+    "ethers": "^6.13.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3"
+  }
+}

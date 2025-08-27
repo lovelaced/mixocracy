@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+target/
+
+# Contract artifacts
+*.wasm
+*.wat
+*.polkavm
+
+# Generated files
+*.generated.*
+
+# Deployment files
+mixocracy_deployment.json
+
+# Package files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+.DS_Store
+*.log

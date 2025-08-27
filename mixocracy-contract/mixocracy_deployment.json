@@ -1,0 +1,9 @@
+{
+  "address": "0x42223629303D674AD30338760A6663F9A93484D9",
+  "deploymentTx": "0x398dc5497ba1ac27742e43bd45b10d51efac3bd5254f230f491cc1f9d4bfea1a",
+  "deployer": "0x953701ef658cf531DAD9E23E5eF32dDA6D6A4467",
+  "owner": "0x953701ef658cf531DAD9E23E5eF32dDA6D6A4467",
+  "timestamp": "2025-08-27T18:51:09.347Z",
+  "network": "westend",
+  "rpcUrl": "https://westend-asset-hub-eth-rpc.polkadot.io"
+}
