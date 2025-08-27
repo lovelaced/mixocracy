@@ -7,7 +7,7 @@ export const westendAssetHub = defineChain({
   id: 420420421, // 0x190f1b45 in hex
   name: 'Westend Asset Hub',
   nativeCurrency: {
-    decimals: 12,
+    decimals: 18,
     name: 'WND',
     symbol: 'WND',
   },

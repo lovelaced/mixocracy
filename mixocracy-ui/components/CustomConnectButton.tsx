@@ -45,18 +45,59 @@ export const CustomConnectButton = () => {
 
               if (chain.unsupported) {
                 return (
-                  <button onClick={openChainModal} type="button" className="btn btn-primary">
-                    Wrong network
+                  <button 
+                    onClick={async () => {
+                      // Try to add and switch to the network
+                      if (typeof window !== 'undefined' && window.ethereum) {
+                        try {
+                          // First try to switch to the network
+                          await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0x190f1b45' }], // 420420421 in hex
+                          });
+                        } catch (switchError) {
+                          // This error code indicates that the chain has not been added to MetaMask
+                          if ((switchError as Error & { code?: number })?.code === 4902) {
+                            try {
+                              await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [
+                                  {
+                                    chainId: '0x190f1b45',
+                                    chainName: 'Westend Asset Hub',
+                                    nativeCurrency: {
+                                      name: 'WND',
+                                      symbol: 'WND',
+                                      decimals: 18,
+                                    },
+                                    rpcUrls: ['https://westend-asset-hub-eth-rpc.polkadot.io'],
+                                    blockExplorerUrls: ['https://blockscout-asset-hub.parity-chains-scw.parity.io'],
+                                  },
+                                ],
+                              });
+                            } catch (addError) {
+                              console.error('Failed to add network:', addError);
+                            }
+                          } else {
+                            console.error('Failed to switch network:', switchError);
+                          }
+                        }
+                      }
+                    }} 
+                    type="button" 
+                    className="btn btn-primary"
+                  >
+                    Add Westend Network
                   </button>
                 );
               }
 
               return (
-                <div className="flex items-center gap-sm">
+                <div className="flex items-center gap-xs md:gap-sm">
                   <button
                     onClick={openChainModal}
                     type="button"
-                    className="btn btn-ghost btn-sm flex items-center gap-xs"
+                    className="btn btn-ghost btn-sm items-center gap-xs hidden md:flex"
                   >
                     {chain.hasIcon && (
                       <div
@@ -82,9 +123,10 @@ export const CustomConnectButton = () => {
                     type="button"
                     className="btn btn-primary btn-sm"
                   >
-                    {account.displayName}
+                    <span className="hidden md:inline">{account.displayName}</span>
+                    <span className="md:hidden">{account.address.slice(0, 6)}...</span>
                     {account.displayBalance && (
-                      <span className="opacity-70 ml-1">
+                      <span className="opacity-70 ml-1 hidden md:inline">
                         ({account.displayBalance})
                       </span>
                     )}

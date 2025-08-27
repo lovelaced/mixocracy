@@ -15,6 +15,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { MIXOCRACY_CONTRACT_ADDRESS } from '@/lib/contract-config';
 import { CustomConnectButton } from '@/components/CustomConnectButton';
+import { truncateError } from '@/lib/utils';
 
 export default function Home() {
   const { isConnected, address } = useAccount();
@@ -162,25 +163,31 @@ export default function Home() {
       } else if (isDj && activeTab === 'admin' && address) {
         // Load own songs when in BOOTH
         loadSongs(address);
+      } else if (activeDjs.length === 1 && activeTab === 'live') {
+        // Auto-load songs when there's only one DJ live
+        loadSongs(activeDjs[0]);
+        const interval = setInterval(() => loadSongs(activeDjs[0]), 5000);
+        return () => clearInterval(interval);
       }
     }
-  }, [selectedDj, isDj, activeTab, address, contract.hasProvider, loadSongs]);
+  }, [selectedDj, isDj, activeTab, address, contract.hasProvider, loadSongs, activeDjs]);
 
-  async function handleVote(songId: number) {
-    if (!selectedDj || votedSongs.has(songId)) return;
+  async function handleVote(songId: number, djAddress?: string) {
+    const targetDj = djAddress || selectedDj;
+    if (!targetDj || votedSongs.has(songId)) return;
     
     setLoading(true);
     try {
-      const tx = await contract.vote(selectedDj, songId);
+      const tx = await contract.vote(targetDj, songId);
       await tx.wait();
       
       setVotedSongs(prev => new Set(prev).add(songId));
       toast.success('Vote submitted!');
       
       // Reload songs
-      loadSongs(selectedDj);
+      loadSongs(targetDj);
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to vote');
+      toast.error(truncateError(error) || 'Failed to vote');
     } finally {
       setLoading(false);
     }
@@ -196,7 +203,7 @@ export default function Home() {
       toast.success('Set started!');
       loadActiveDjs();
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to start set');
+      toast.error(truncateError(error) || 'Failed to start set');
     } finally {
       setLoading(false);
     }
@@ -212,7 +219,7 @@ export default function Home() {
       toast.success('Set stopped!');
       loadActiveDjs();
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to stop set');
+      toast.error(truncateError(error) || 'Failed to stop set');
     } finally {
       setLoading(false);
     }
@@ -231,7 +238,7 @@ export default function Home() {
       // Reload all DJs to show the newly added one
       loadAllDjs();
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to add DJ');
+      toast.error(truncateError(error) || 'Failed to add DJ');
     } finally {
       setLoading(false);
     }
@@ -247,7 +254,7 @@ export default function Home() {
       toast.success('DJ removed!');
       loadAllDjs();
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to remove DJ');
+      toast.error(truncateError(error) || 'Failed to remove DJ');
     } finally {
       setLoading(false);
     }
@@ -267,7 +274,7 @@ export default function Home() {
         loadSongs(address);
       }
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to add song');
+      toast.error(truncateError(error) || 'Failed to add song');
     } finally {
       setLoading(false);
     }
@@ -284,7 +291,7 @@ export default function Home() {
       // Reload songs
       loadSongs(address);
     } catch (error) {
-      toast.error((error as Error).message || 'Failed to remove song');
+      toast.error(truncateError(error) || 'Failed to remove song');
     } finally {
       setLoading(false);
     }
@@ -296,12 +303,47 @@ export default function Home() {
 
   return (
     <>
-      <Toaster position="bottom-right" />
+      <Toaster 
+        position="bottom-right" 
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: 'var(--surface-card)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '16px',
+            fontSize: '14px',
+            maxWidth: '400px',
+            wordBreak: 'break-word',
+          },
+          success: {
+            iconTheme: {
+              primary: 'var(--accent-primary)',
+              secondary: 'var(--surface-card)',
+            },
+            style: {
+              borderColor: 'var(--accent-primary)',
+              boxShadow: '0 0 20px rgba(255, 38, 112, 0.2)',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#ff4444',
+              secondary: 'var(--surface-card)',
+            },
+            style: {
+              borderColor: '#ff4444',
+              boxShadow: '0 0 20px rgba(255, 68, 68, 0.2)',
+            },
+          },
+        }}
+      />
       
       {/* Header */}
       <header className="border-b border-subtle">
-        <div className="container flex items-center justify-between p-lg">
-          <h1 className="text-4xl font-bold">
+        <div className="container flex items-center justify-between p-md md:p-lg">
+          <h1 className="text-2xl md:text-4xl font-bold">
             <span className="text-accent neon-text-subtle">MIXOCRACY</span>
           </h1>
           <CustomConnectButton />
@@ -329,6 +371,7 @@ export default function Home() {
           </nav>
         </div>
       )}
+
 
       {/* Main Content */}
       <main className="container mb-xl">
@@ -381,82 +424,146 @@ export default function Home() {
 
             {/* Live Now Section */}
             <section>
-              <h3 className="text-2xl font-bold mb-lg flex items-center gap-md">
-                <span>LIVE NOW</span>
-                {activeDjs.length > 0 && (
-                  <div className="live-indicator">
-                    <span className="live-dot"></span>
-                    {activeDjs.length} DJ{activeDjs.length !== 1 ? 'S' : ''}
+              {activeDjs.length === 1 ? (
+                // Single DJ - Show tracklist directly for non-logged in users
+                <>
+                  <div className="flex items-center justify-between mb-lg">
+                    <div>
+                      <h3 className="text-2xl font-bold">
+                        <span>LIVE NOW: </span>
+                        <span className="text-accent">{formatAddress(activeDjs[0])}</span>
+                      </h3>
+                      {djInfoMap.get(activeDjs[0])?.metadata && (
+                        <p className="text-sm text-secondary mt-xs">&ldquo;{djInfoMap.get(activeDjs[0])?.metadata}&rdquo;</p>
+                      )}
+                    </div>
+                    <div className="live-indicator">
+                      <span className="live-dot"></span>
+                      LIVE
+                    </div>
                   </div>
-                )}
-              </h3>
-              
-              {activeDjs.length === 0 ? (
-                <div className="card glass-dark text-center p-xl">
-                  <p className="text-secondary mb-lg">No DJs are currently live</p>
-                  <p className="text-sm text-tertiary">Check back soon or log in if you&apos;re a DJ</p>
-                </div>
-              ) : (
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-lg">
-                  {activeDjs.map((djAddress) => {
-                    const info = djInfoMap.get(djAddress);
-                    return (
-                      <div
-                        key={djAddress}
-                        className="card glass-dark hoverable cursor-pointer transition-all"
-                        onClick={() => {
-                          if (!isConnected) {
-                            toast.error('Please log in to vote on tracks');
-                          } else {
-                            setSelectedDj(djAddress);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between mb-md">
-                          <h4 className="font-semibold text-lg">{formatAddress(djAddress)}</h4>
-                          <div className="live-indicator">
-                            <span className="live-dot"></span>
-                            LIVE
-                          </div>
-                        </div>
-                        {info && (
-                          <div className="space-y-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-secondary">Tracks loaded</span>
-                              <span className="font-mono text-sm">{info.songCount}</span>
+                  
+                  {songs.length === 0 ? (
+                    <div className="card glass-dark text-center p-xl">
+                      <p className="text-secondary">No tracks in queue yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-sm mb-lg">
+                      <p className="text-sm text-secondary mb-md">Current tracklist - Log in to vote:</p>
+                      {songs.map((song, index) => {
+                        const isNext = index === 0;
+                        return (
+                          <div
+                            key={song.id}
+                            className={`track-item ${isNext ? 'active' : ''}`}
+                          >
+                            <div className="flex items-center justify-between w-full gap-md">
+                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
+                                <span className="text-tertiary text-xs md:text-sm font-mono">
+                                  #{index + 1}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  {isNext && (
+                                    <span className="badge badge-success text-xs">NEXT UP</span>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-xs md:gap-sm">
+                                <div className="vote-count text-center">
+                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                </div>
+                              </div>
                             </div>
-                            {info.metadata && (
-                              <p className="text-xs text-tertiary italic">&ldquo;{info.metadata}&rdquo;</p>
-                            )}
                           </div>
-                        )}
-                        <div className="mt-lg border-t border-subtle">
-                          <div style={{ paddingTop: '1.5rem' }}>
-                            {isConnected ? (
-                              <p className="text-xs text-accent uppercase tracking-wide">
-                                View tracklist →
-                              </p>
-                            ) : (
-                              <button 
-                                className="text-xs text-accent uppercase tracking-wide hover:text-primary transition-colors"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // Find and click the Log In button
-                                  const loginButton = document.querySelector('.btn.btn-primary');
-                                  if (loginButton && loginButton.textContent === 'Log In') {
-                                    (loginButton as HTMLButtonElement).click();
-                                  }
-                                }}
-                              >
-                                Log in to vote →
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Multiple DJs or no DJs
+                <>
+                  <h3 className="text-2xl font-bold mb-lg flex items-center gap-md">
+                    <span>LIVE NOW</span>
+                    {activeDjs.length > 0 && (
+                      <div className="live-indicator">
+                        <span className="live-dot"></span>
+                        {activeDjs.length} DJ{activeDjs.length !== 1 ? 'S' : ''}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                  </h3>
+                  
+                  {activeDjs.length === 0 ? (
+                    <div className="card glass-dark text-center p-xl">
+                      <p className="text-secondary mb-lg">No DJs are currently live</p>
+                      <p className="text-sm text-tertiary">Check back soon or log in if you&apos;re a DJ</p>
+                    </div>
+                  ) : (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-lg">
+                      {activeDjs.map((djAddress) => {
+                        const info = djInfoMap.get(djAddress);
+                        return (
+                          <div
+                            key={djAddress}
+                            className="card glass-dark hoverable cursor-pointer transition-all"
+                            onClick={() => {
+                              if (!isConnected) {
+                                toast.error('Please log in to vote on tracks');
+                              } else {
+                                setSelectedDj(djAddress);
+                              }
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-md">
+                              <h4 className="font-semibold text-lg">{formatAddress(djAddress)}</h4>
+                              <div className="live-indicator">
+                                <span className="live-dot"></span>
+                                LIVE
+                              </div>
+                            </div>
+                            {info && (
+                              <div className="space-y-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm text-secondary">Tracks loaded</span>
+                                  <span className="font-mono text-sm">{info.songCount}</span>
+                                </div>
+                                {info.metadata && (
+                                  <p className="text-xs text-tertiary italic">&ldquo;{info.metadata}&rdquo;</p>
+                                )}
+                              </div>
+                            )}
+                            <div className="mt-lg border-t border-subtle">
+                              <div style={{ paddingTop: '1.5rem' }}>
+                                {isConnected ? (
+                                  <p className="text-xs text-accent uppercase tracking-wide">
+                                    View tracklist →
+                                  </p>
+                                ) : (
+                                  <button 
+                                    className="text-xs text-accent uppercase tracking-wide hover:text-primary transition-colors"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // Find and click the Log In button
+                                      const loginButton = document.querySelector('.btn.btn-primary');
+                                      if (loginButton && loginButton.textContent === 'Log In') {
+                                        (loginButton as HTMLButtonElement).click();
+                                      }
+                                    }}
+                                  >
+                                    Log in to vote →
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </section>
 
@@ -478,7 +585,10 @@ export default function Home() {
               <div className="modal-backdrop" onClick={() => setSelectedDj(null)}>
                 <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px' }}>
                   <div className="modal-header">
-                    <h3 className="modal-title">Vote on Tracks</h3>
+                    <h3 className="modal-title text-lg md:text-xl">
+                      <span className="md:hidden">Vote Now</span>
+                      <span className="hidden md:inline">Vote on Tracks</span>
+                    </h3>
                     <button
                       className="btn-icon"
                       onClick={() => setSelectedDj(null)}
@@ -502,30 +612,32 @@ export default function Home() {
                             key={song.id}
                             className={`track-item ${isNext ? 'active' : ''}`}
                           >
-                            <div className="flex items-center gap-md flex-1">
-                              <span className="text-tertiary text-sm font-mono">
-                                #{index + 1}
-                              </span>
-                              <div className="flex-1">
-                                <h4 className="font-medium">{song.name}</h4>
-                                {isNext && (
-                                  <span className="badge badge-success text-xs">NEXT UP</span>
-                                )}
+                            <div className="flex items-center justify-between w-full gap-md">
+                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
+                                <span className="text-tertiary text-xs md:text-sm font-mono">
+                                  #{index + 1}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  {isNext && (
+                                    <span className="badge badge-success text-xs">NEXT UP</span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                            
-                            <div className="flex items-center gap-sm">
-                              <div className="vote-count">
-                                <span className="text-sm">{song.votes}</span>
-                                <span className="text-xs text-tertiary">votes</span>
+                              
+                              <div className="flex items-center gap-xs md:gap-sm">
+                                <div className="vote-count text-center">
+                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                </div>
+                                <button
+                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  onClick={() => handleVote(song.id)}
+                                  disabled={hasVoted || loading}
+                                >
+                                  {hasVoted ? '✓' : 'VOTE'}
+                                </button>
                               </div>
-                              <button
-                                className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                onClick={() => handleVote(song.id)}
-                                disabled={hasVoted || loading}
-                              >
-                                {hasVoted ? '✓' : '↑'}
-                              </button>
                             </div>
                           </div>
                         );
@@ -537,65 +649,134 @@ export default function Home() {
             )}
           </div>
         ) : (!isOwner && !isDj) ? (
-          /* Logged in but not a DJ - show live DJs only */
+          /* Logged in but not a DJ - show live DJs or direct tracklist */
           <div className="mt-xl">
             <section>
-              <h2 className="text-2xl font-bold mb-lg flex items-center gap-md">
-                <span>LIVE DJs</span>
-                {activeDjs.length > 0 && (
-                  <div className="live-indicator">
-                    <span className="live-dot"></span>
-                    {activeDjs.length}
+              {activeDjs.length === 1 ? (
+                // Single DJ - show tracklist directly
+                <>
+                  <div className="flex items-center justify-between mb-lg">
+                    <div>
+                      <h2 className="text-xl font-semibold">Live Now: {formatAddress(activeDjs[0])}</h2>
+                      {djInfoMap.get(activeDjs[0])?.metadata && (
+                        <p className="text-sm text-secondary mt-xs">&ldquo;{djInfoMap.get(activeDjs[0])?.metadata}&rdquo;</p>
+                      )}
+                    </div>
+                    <div className="live-indicator">
+                      <span className="live-dot"></span>
+                      LIVE
+                    </div>
                   </div>
-                )}
-              </h2>
-              
-              {activeDjs.length === 0 ? (
-                <div className="card glass-dark text-center p-xl">
-                  <p className="text-secondary mb-lg">No DJs are currently live</p>
-                  <p className="text-sm text-tertiary">Check back soon for live sets</p>
-                </div>
-              ) : (
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-lg">
-                  {activeDjs.map((djAddress) => {
-                    const info = djInfoMap.get(djAddress);
-                    const isSelected = selectedDj === djAddress;
-                    return (
-                      <div
-                        key={djAddress}
-                        className={`card glass-dark hoverable cursor-pointer transition-all ${isSelected ? 'ring-2 ring-accent' : ''}`}
-                        onClick={() => setSelectedDj(djAddress)}
-                      >
-                        <div className="flex items-center justify-between mb-md">
-                          <h3 className="font-semibold text-lg">{formatAddress(djAddress)}</h3>
-                          <div className="live-indicator">
-                            <span className="live-dot"></span>
-                            LIVE
-                          </div>
-                        </div>
-                        {info && (
-                          <div className="space-y-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-secondary">Tracks loaded</span>
-                              <span className="font-mono text-sm">{info.songCount}</span>
+                  
+                  {songs.length === 0 ? (
+                    <div className="card text-center p-xl">
+                      <p className="text-secondary">No tracks in queue</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-sm">
+                      {songs.map((song, index) => {
+                        const hasVoted = votedSongs.has(song.id);
+                        const isNext = index === 0;
+                        
+                        return (
+                          <div
+                            key={song.id}
+                            className={`track-item ${isNext ? 'active' : ''}`}
+                          >
+                            <div className="flex items-center justify-between w-full gap-md">
+                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
+                                <span className="text-tertiary text-xs md:text-sm font-mono">
+                                  #{index + 1}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  {isNext && (
+                                    <span className="badge badge-success text-xs">NEXT UP</span>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-xs md:gap-sm">
+                                <div className="vote-count text-center">
+                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                </div>
+                                <button
+                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  onClick={() => handleVote(song.id, activeDjs[0])}
+                                  disabled={hasVoted || loading}
+                                >
+                                  {hasVoted ? '✓' : 'VOTE'}
+                                </button>
+                              </div>
                             </div>
-                            {info.metadata && (
-                              <p className="text-xs text-tertiary italic">&ldquo;{info.metadata}&rdquo;</p>
-                            )}
                           </div>
-                        )}
-                        <div className="mt-lg border-t border-subtle">
-                          <div style={{ paddingTop: '1.5rem' }}>
-                            <p className="text-xs text-accent uppercase tracking-wide flex items-center gap-xs">
-                              <span>View tracklist</span>
-                              <span>→</span>
-                            </p>
-                          </div>
-                        </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Multiple DJs or no DJs - show grid
+                <>
+                  <h2 className="text-2xl font-bold mb-lg flex items-center gap-md">
+                    <span>LIVE DJs</span>
+                    {activeDjs.length > 0 && (
+                      <div className="live-indicator">
+                        <span className="live-dot"></span>
+                        {activeDjs.length}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                  </h2>
+                  
+                  {activeDjs.length === 0 ? (
+                    <div className="card glass-dark text-center p-xl">
+                      <p className="text-secondary mb-lg">No DJs are currently live</p>
+                      <p className="text-sm text-tertiary">Check back soon for live sets</p>
+                    </div>
+                  ) : (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-lg">
+                      {activeDjs.map((djAddress) => {
+                        const info = djInfoMap.get(djAddress);
+                        const isSelected = selectedDj === djAddress;
+                        return (
+                          <div
+                            key={djAddress}
+                            className={`card glass-dark hoverable cursor-pointer transition-all ${isSelected ? 'ring-2 ring-accent' : ''}`}
+                            onClick={() => setSelectedDj(djAddress)}
+                          >
+                            <div className="flex items-center justify-between mb-md">
+                              <h3 className="font-semibold text-lg">{formatAddress(djAddress)}</h3>
+                              <div className="live-indicator">
+                                <span className="live-dot"></span>
+                                LIVE
+                              </div>
+                            </div>
+                            {info && (
+                              <div className="space-y-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm text-secondary">Tracks loaded</span>
+                                  <span className="font-mono text-sm">{info.songCount}</span>
+                                </div>
+                                {info.metadata && (
+                                  <p className="text-xs text-tertiary italic">&ldquo;{info.metadata}&rdquo;</p>
+                                )}
+                              </div>
+                            )}
+                            <div className="mt-lg border-t border-subtle">
+                              <div style={{ paddingTop: '1.5rem' }}>
+                                <p className="text-xs text-accent uppercase tracking-wide flex items-center gap-xs">
+                                  <span>View tracklist</span>
+                                  <span>→</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </section>
             
@@ -628,30 +809,32 @@ export default function Home() {
                             key={song.id}
                             className={`track-item ${isNext ? 'active' : ''}`}
                           >
-                            <div className="flex items-center gap-md flex-1">
-                              <span className="text-tertiary text-sm font-mono">
-                                #{index + 1}
-                              </span>
-                              <div className="flex-1">
-                                <h4 className="font-medium">{song.name}</h4>
-                                {isNext && (
-                                  <span className="badge badge-success text-xs">NEXT UP</span>
-                                )}
+                            <div className="flex items-center justify-between w-full gap-md">
+                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
+                                <span className="text-tertiary text-xs md:text-sm font-mono">
+                                  #{index + 1}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  {isNext && (
+                                    <span className="badge badge-success text-xs">NEXT UP</span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                            
-                            <div className="flex items-center gap-sm">
-                              <div className="vote-count">
-                                <span className="text-sm">{song.votes}</span>
-                                <span className="text-xs text-tertiary">votes</span>
+                              
+                              <div className="flex items-center gap-xs md:gap-sm">
+                                <div className="vote-count text-center">
+                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                </div>
+                                <button
+                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  onClick={() => handleVote(song.id)}
+                                  disabled={hasVoted || loading}
+                                >
+                                  {hasVoted ? '✓' : 'VOTE'}
+                                </button>
                               </div>
-                              <button
-                                className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                onClick={() => handleVote(song.id)}
-                                disabled={hasVoted || loading}
-                              >
-                                {hasVoted ? '✓' : '↑'}
-                              </button>
                             </div>
                           </div>
                         );
@@ -666,57 +849,133 @@ export default function Home() {
           <div>
             {/* Active DJs */}
             <section>
-              <h2 className="text-xl font-semibold mb-lg">Live DJs</h2>
-              {activeDjs.length === 0 ? (
-                <div className="card text-center p-xl">
-                  <p className="text-secondary">No DJs are currently live</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-lg">
-                  {activeDjs.map((djAddress) => {
-                    const info = djInfoMap.get(djAddress);
-                    const isSelected = selectedDj === djAddress;
-                    return (
-                      <div
-                        key={djAddress}
-                        className={`card glass-dark hoverable cursor-pointer transition-all ${isSelected ? 'ring-2 ring-accent' : ''}`}
-                        onClick={() => setSelectedDj(djAddress)}
-                      >
-                        <div className="flex items-center justify-between mb-md">
-                          <h3 className="font-semibold text-lg">{formatAddress(djAddress)}</h3>
-                          <div className="live-indicator">
-                            <span className="live-dot"></span>
-                            LIVE
-                          </div>
-                        </div>
-                        {info && (
-                          <div className="space-y-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-secondary">Tracks in queue</span>
-                              <span className="font-mono text-sm">{info.songCount}</span>
-                            </div>
-                            {info.metadata && (
-                              <p className="text-xs text-tertiary italic">&ldquo;{info.metadata}&rdquo;</p>
-                            )}
-                          </div>
-                        )}
-                        <div className="mt-lg border-t border-subtle">
-                          <div style={{ paddingTop: '1.5rem' }}>
-                            <p className="text-xs text-accent uppercase tracking-wide flex items-center gap-xs">
-                              <span>View tracklist</span>
-                              <span>→</span>
-                            </p>
-                          </div>
-                        </div>
+              {activeDjs.length === 1 ? (
+                // Single DJ - show tracklist directly
+                <>
+                  <div className="mb-lg">
+                    <h2 className="text-2xl font-bold mb-sm">
+                      <span className="text-primary">VOTE THE</span>{' '}
+                      <span className="text-accent">NEXT TRACK</span>
+                    </h2>
+                    <div className="flex items-center gap-sm flex-wrap">
+                      <span className="text-sm text-secondary">DJ:</span>
+                      <span className="text-sm font-medium">{formatAddress(activeDjs[0])}</span>
+                      {djInfoMap.get(activeDjs[0])?.metadata && (
+                        <span className="text-sm text-tertiary italic">&ldquo;{djInfoMap.get(activeDjs[0])?.metadata}&rdquo;</span>
+                      )}
+                      <div className="live-indicator">
+                        <span className="live-dot"></span>
+                        LIVE
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  </div>
+                  
+                  {songs.length === 0 ? (
+                    <div className="card text-center p-xl">
+                      <p className="text-secondary">No tracks in queue</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-sm">
+                      {songs.map((song, index) => {
+                        const hasVoted = votedSongs.has(song.id);
+                        const isNext = index === 0;
+                        
+                        return (
+                          <div
+                            key={song.id}
+                            className={`track-item ${isNext ? 'active' : ''}`}
+                          >
+                            <div className="flex items-center justify-between w-full gap-md">
+                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
+                                <span className="text-tertiary text-xs md:text-sm font-mono">
+                                  #{index + 1}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  {isNext && (
+                                    <span className="badge badge-success text-xs">NEXT UP</span>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-xs md:gap-sm">
+                                <div className="vote-count text-center">
+                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                </div>
+                                {isConnected && (
+                                  <button
+                                    className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                    onClick={() => handleVote(song.id, activeDjs[0])}
+                                    disabled={hasVoted || loading}
+                                  >
+                                    {hasVoted ? '✓' : 'VOTE'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Multiple DJs or no DJs - show grid
+                <>
+                  <h2 className="text-xl font-semibold mb-lg">Live DJs</h2>
+                  {activeDjs.length === 0 ? (
+                    <div className="card text-center p-xl">
+                      <p className="text-secondary">No DJs are currently live</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-lg">
+                      {activeDjs.map((djAddress) => {
+                        const info = djInfoMap.get(djAddress);
+                        const isSelected = selectedDj === djAddress;
+                        return (
+                          <div
+                            key={djAddress}
+                            className={`card glass-dark hoverable cursor-pointer transition-all ${isSelected ? 'ring-2 ring-accent' : ''}`}
+                            onClick={() => setSelectedDj(djAddress)}
+                          >
+                            <div className="flex items-center justify-between mb-md">
+                              <h3 className="font-semibold text-lg">{formatAddress(djAddress)}</h3>
+                              <div className="live-indicator">
+                                <span className="live-dot"></span>
+                                LIVE
+                              </div>
+                            </div>
+                            {info && (
+                              <div className="space-y-sm">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm text-secondary">Tracks in queue</span>
+                                  <span className="font-mono text-sm">{info.songCount}</span>
+                                </div>
+                                {info.metadata && (
+                                  <p className="text-xs text-tertiary italic">&ldquo;{info.metadata}&rdquo;</p>
+                                )}
+                              </div>
+                            )}
+                            <div className="mt-lg border-t border-subtle">
+                              <div style={{ paddingTop: '1.5rem' }}>
+                                <p className="text-xs text-accent uppercase tracking-wide flex items-center gap-xs">
+                                  <span>View tracklist</span>
+                                  <span>→</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </section>
 
-            {/* Song List */}
-            {selectedDj && (
+            {/* Song List - Only show when multiple DJs and one is selected */}
+            {selectedDj && activeDjs.length > 1 && (
               <section className="mt-2xl">
                 <div className="flex items-center justify-between mb-lg">
                   <h2 className="text-xl font-semibold">Song Queue</h2>
@@ -744,32 +1003,34 @@ export default function Home() {
                           key={song.id}
                           className={`track-item ${isNext ? 'active' : ''}`}
                         >
-                          <div className="flex items-center gap-md flex-1">
-                            <span className="text-tertiary text-sm font-mono">
-                              #{index + 1}
-                            </span>
-                            <div className="flex-1">
-                              <h4 className="font-medium">{song.name}</h4>
-                              {isNext && (
-                                <span className="badge badge-success text-xs">NEXT UP</span>
+                          <div className="flex items-center justify-between w-full gap-md">
+                            <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
+                              <span className="text-tertiary text-xs md:text-sm font-mono">
+                                #{index + 1}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                {isNext && (
+                                  <span className="badge badge-success text-xs">NEXT UP</span>
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-xs md:gap-sm">
+                              <div className="vote-count text-center">
+                                <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                <div className="text-xs text-tertiary hidden md:block">votes</div>
+                              </div>
+                              {isConnected && (
+                                <button
+                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  onClick={() => handleVote(song.id)}
+                                  disabled={hasVoted || loading}
+                                >
+                                  {hasVoted ? '✓' : 'VOTE'}
+                                </button>
                               )}
                             </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-sm">
-                            <div className="vote-count">
-                              <span className="text-sm">{song.votes}</span>
-                              <span className="text-xs text-tertiary">votes</span>
-                            </div>
-                            {isConnected && (
-                              <button
-                                className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                onClick={() => handleVote(song.id)}
-                                disabled={hasVoted || loading}
-                              >
-                                {hasVoted ? '✓' : '↑'}
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
