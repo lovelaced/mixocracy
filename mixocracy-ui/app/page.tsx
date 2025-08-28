@@ -36,9 +36,12 @@ export default function Home() {
   const [newDjAddress, setNewDjAddress] = useState('');
   const [newSongName, setNewSongName] = useState('');
   const [allDjs, setAllDjs] = useState<string[]>([]);
+  const [roleChecked, setRoleChecked] = useState(false);
 
   // Define callback functions first
   const loadActiveDjs = useCallback(async () => {
+    if (!contract.getActiveDjs || !contract.getDjInfo) return;
+    
     try {
       const djs = await contract.getActiveDjs();
       setActiveDjs(djs);
@@ -57,9 +60,11 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading active DJs:', error);
     }
-  }, [contract]);
+  }, [contract.getActiveDjs, contract.getDjInfo]);
 
   const loadAllDjs = useCallback(async () => {
+    if (!contract.getAllDjs || !contract.getDjInfo) return;
+    
     try {
       const djs = await contract.getAllDjs();
       setAllDjs(djs);
@@ -78,29 +83,27 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading all DJs:', error);
     }
-  }, [contract]);
+  }, [contract.getAllDjs, contract.getDjInfo]);
 
   const checkUserRole = useCallback(async () => {
-    if (!address) return;
+    if (!address || !contract.hasProvider || !contract.isDj) return;
     
     try {
       // Check if owner (hardcoded from deployment)
-      setIsOwner(address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467');
+      const isOwnerAddress = address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467';
+      setIsOwner(isOwnerAddress);
       
       // Check if DJ
       const djStatus = await contract.isDj(address);
       setIsDj(djStatus);
-      
-      if (djStatus || address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467') {
-        // Load all DJs if admin or owner
-        loadAllDjs();
-      }
     } catch (error) {
       console.error('Error checking user role:', error);
     }
-  }, [address, contract, loadAllDjs]);
+  }, [address, contract.isDj, contract.hasProvider]);
 
   const loadSongs = useCallback(async (djAddress: string) => {
+    if (!contract.getSongCount || !contract.getSong || !contract.getVotes || !contract.getSongsWithVotes || !contract.hasVoted) return;
+    
     try {
       // If loading for self in BOOTH and not live, load songs differently
       if (djAddress === address && activeTab === 'admin' && !activeDjs.includes(djAddress)) {
@@ -130,12 +133,28 @@ export default function Home() {
         const songList = await contract.getSongsWithVotes(djAddress);
         const sortedSongs = songList.sort((a, b) => b.votes - a.votes);
         setSongs(sortedSongs);
+        
+        // Check which songs the current user has voted for
+        if (address) {
+          const votedSet = new Set<number>();
+          for (const song of sortedSongs) {
+            try {
+              const hasVoted = await contract.hasVoted(address, djAddress, song.id);
+              if (hasVoted) {
+                votedSet.add(song.id);
+              }
+            } catch (error) {
+              console.error('Error checking vote status:', error);
+            }
+          }
+          setVotedSongs(votedSet);
+        }
       }
     } catch (error) {
       console.error('Error loading songs:', error);
       setSongs([]);
     }
-  }, [address, activeTab, activeDjs, contract]);
+  }, [address, activeTab, activeDjs, contract.getSongCount, contract.getSong, contract.getVotes, contract.getSongsWithVotes, contract.hasVoted]);
 
   // Load active DJs
   useEffect(() => {
@@ -148,29 +167,52 @@ export default function Home() {
 
   // Check if current user is owner/DJ
   useEffect(() => {
-    if (address && contract.hasProvider) {
-      checkUserRole();
+    if (address && contract.hasProvider && !roleChecked) {
+      checkUserRole().then(() => setRoleChecked(true));
+    } else if (!address) {
+      // Reset role check when disconnected
+      setRoleChecked(false);
+      setIsOwner(false);
+      setIsDj(false);
     }
-  }, [address, contract.hasProvider, checkUserRole]);
+  }, [address, contract.hasProvider, roleChecked, checkUserRole]);
+  
+  // Load all DJs when user is owner or DJ
+  useEffect(() => {
+    if (contract.hasProvider && (isOwner || isDj)) {
+      loadAllDjs();
+    }
+  }, [contract.hasProvider, isOwner, isDj, loadAllDjs]);
 
   // Load songs when DJ is selected or when viewing own tracks in BOOTH
   useEffect(() => {
-    if (contract.hasProvider) {
-      if (selectedDj) {
-        loadSongs(selectedDj);
-        const interval = setInterval(() => loadSongs(selectedDj), 5000);
-        return () => clearInterval(interval);
-      } else if (isDj && activeTab === 'admin' && address) {
-        // Load own songs when in BOOTH
-        loadSongs(address);
-      } else if (activeDjs.length === 1 && activeTab === 'live') {
-        // Auto-load songs when there's only one DJ live
-        loadSongs(activeDjs[0]);
-        const interval = setInterval(() => loadSongs(activeDjs[0]), 5000);
-        return () => clearInterval(interval);
-      }
+    if (!contract.hasProvider) return;
+    
+    let interval: NodeJS.Timeout;
+    
+    if (selectedDj) {
+      loadSongs(selectedDj);
+      interval = setInterval(() => loadSongs(selectedDj), 5000);
+    } else if (isDj && activeTab === 'admin' && address) {
+      // Load own songs when in BOOTH
+      loadSongs(address);
+      // Clear voted songs for admin view
+      setVotedSongs(new Set());
+    } else if (activeDjs.length === 1 && activeTab === 'live') {
+      // Auto-load songs when there's only one DJ live
+      loadSongs(activeDjs[0]);
+      interval = setInterval(() => loadSongs(activeDjs[0]), 5000);
+    } else {
+      // Clear songs and voted state when no DJ is selected
+      setSongs([]);
+      setVotedSongs(new Set());
     }
-  }, [selectedDj, isDj, activeTab, address, contract.hasProvider, loadSongs, activeDjs]);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDj, isDj, activeTab, address, contract.hasProvider, activeDjs.length]);
 
   async function handleVote(songId: number, djAddress?: string) {
     const targetDj = djAddress || selectedDj;
@@ -631,11 +673,11 @@ export default function Home() {
                                   <div className="text-xs text-tertiary hidden md:block">votes</div>
                                 </div>
                                 <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                   onClick={() => handleVote(song.id)}
                                   disabled={hasVoted || loading}
                                 >
-                                  {hasVoted ? '✓' : 'VOTE'}
+                                  {hasVoted ? '✓' : '↑'}
                                 </button>
                               </div>
                             </div>
@@ -702,11 +744,11 @@ export default function Home() {
                                   <div className="text-xs text-tertiary hidden md:block">votes</div>
                                 </div>
                                 <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                   onClick={() => handleVote(song.id, activeDjs[0])}
                                   disabled={hasVoted || loading}
                                 >
-                                  {hasVoted ? '✓' : 'VOTE'}
+                                  {hasVoted ? '✓' : '↑'}
                                 </button>
                               </div>
                             </div>
@@ -828,11 +870,11 @@ export default function Home() {
                                   <div className="text-xs text-tertiary hidden md:block">votes</div>
                                 </div>
                                 <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                   onClick={() => handleVote(song.id)}
                                   disabled={hasVoted || loading}
                                 >
-                                  {hasVoted ? '✓' : 'VOTE'}
+                                  {hasVoted ? '✓' : '↑'}
                                 </button>
                               </div>
                             </div>
@@ -905,11 +947,11 @@ export default function Home() {
                                 </div>
                                 {isConnected && (
                                   <button
-                                    className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                    className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                     onClick={() => handleVote(song.id, activeDjs[0])}
                                     disabled={hasVoted || loading}
                                   >
-                                    {hasVoted ? '✓' : 'VOTE'}
+                                    {hasVoted ? '✓' : '↑'}
                                   </button>
                                 )}
                               </div>
@@ -1023,11 +1065,11 @@ export default function Home() {
                               </div>
                               {isConnected && (
                                 <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                   onClick={() => handleVote(song.id)}
                                   disabled={hasVoted || loading}
                                 >
-                                  {hasVoted ? '✓' : 'VOTE'}
+                                  {hasVoted ? '✓' : '↑'}
                                 </button>
                               )}
                             </div>
@@ -1151,7 +1193,10 @@ export default function Home() {
                         
                         <div className="flex items-center gap-sm">
                           {isActive && (
-                            <div className="badge badge-success">LIVE</div>
+                            <div className="live-indicator">
+                              <span className="live-dot"></span>
+                              LIVE
+                            </div>
                           )}
                           {isOwner && djAddress !== address && (
                             <button

@@ -346,26 +346,58 @@ h6 { font-size: 0.875rem; }
 }
 
 .vote-button {
-  padding: var(--space-sm) var(--space-md);
+  width: 36px;
+  height: 36px;
+  padding: 0 var(--space-xs);
   border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-secondary);
   transition: all 0.2s ease;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+@media (min-width: 768px) {
+  .vote-button {
+    width: 56px;
+    padding: 0 var(--space-sm);
+  }
 }
 
 .vote-button:hover {
-  background: var(--surface-hover);
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
-  transform: translateY(-1px);
+  background: rgba(7, 255, 255, 0.1);
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(7, 255, 255, 0.3);
 }
 
 .vote-button.voted {
   background: var(--accent-primary);
   color: white;
   border-color: var(--accent-primary);
+  box-shadow: 0 0 12px rgba(255, 38, 112, 0.4);
+}
+
+.vote-button.voted:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+  transform: none;
+  box-shadow: 0 0 16px rgba(255, 38, 112, 0.5);
+}
+
+.vote-button:disabled {
+  cursor: not-allowed;
+}
+
+.vote-button:disabled:hover {
+  transform: none;
 }
 
 /* Input System */
@@ -410,8 +442,8 @@ h6 { font-size: 0.875rem; }
 }
 
 .badge-success {
-  background: rgba(29, 185, 84, 0.2);
-  color: var(--success);
+  background: rgba(7, 255, 255, 0.2);
+  color: var(--neon-cyan);
 }
 
 .badge-warning {
@@ -840,12 +872,6 @@ h6 { font-size: 0.875rem; }
     gap: var(--space-md);
   }
   
-  .track-item .vote-button {
-    min-width: 60px;
-    height: 44px;
-    font-size: 1rem;
-  }
-  
   .vote-count {
     font-size: 0.875rem;
   }
@@ -888,7 +914,7 @@ h6 { font-size: 0.875rem; }
   }
   
   .vote-button {
-    min-width: 60px;
-    min-height: 44px;
+    width: 44px;
+    height: 44px;
   }
 }
