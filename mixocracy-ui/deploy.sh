@@ -51,8 +51,8 @@ if [ "$1" = "--prod" ]; then
         local var_name=$1
         local env_type=${2:-"production"}
         
-        # Get value from .env.production
-        local var_value=$(grep "^$var_name=" .env.production | cut -d '=' -f2-)
+        # Get value from .env.production and trim whitespace
+        local var_value=$(grep "^$var_name=" .env.production | cut -d '=' -f2- | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         
         if [ -z "$var_value" ]; then
             echo "❌ $var_name not found in .env.production"

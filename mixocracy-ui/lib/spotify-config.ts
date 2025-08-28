@@ -1,6 +1,6 @@
 export const SPOTIFY_CONFIG = {
-  clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID!,
-  redirectUri: process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI!,
+  clientId: process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID?.trim() || '',
+  redirectUri: process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI?.trim() || '',
   scopes: [
     'streaming',
     'user-read-email',

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 
 export async function GET() {
-  const client_id = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID;
-  const client_secret = process.env.SPOTIFY_CLIENT_SECRET;
+  const client_id = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID?.trim();
+  const client_secret = process.env.SPOTIFY_CLIENT_SECRET?.trim();
 
   if (!client_id || !client_secret) {
     return NextResponse.json({ error: 'Spotify credentials not configured' }, { status: 500 });

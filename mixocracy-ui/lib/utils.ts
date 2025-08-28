@@ -38,3 +38,20 @@ export function truncateError(error: unknown, maxLength: number = 100): string {
   
   return message;
 }
+
+export function parseSongData(songName: string): { displayName: string; spotifyUri?: string } {
+  // Check if the song has a Spotify URI appended with |
+  const parts = songName.split('|');
+  if (parts.length === 2 && parts[1].startsWith('spotify:track:')) {
+    return {
+      displayName: parts[0],
+      spotifyUri: parts[1]
+    };
+  }
+  
+  // Legacy format or no Spotify URI
+  return {
+    displayName: songName,
+    spotifyUri: undefined
+  };
+}

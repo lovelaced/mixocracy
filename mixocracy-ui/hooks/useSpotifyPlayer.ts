@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { SpotifyAuth } from '@/lib/spotify-auth';
 import { Song } from '@/hooks/useMixocracyContract';
 import { toast } from 'react-hot-toast';
+import { parseSongData } from '@/lib/utils';
 
 interface PlayerState {
   isReady: boolean;
@@ -188,9 +189,51 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
     const token = accessTokenRef.current || SpotifyAuth.getStoredToken();
     if (!token) return null;
 
+    // Parse song data to check for Spotify URI
+    const { displayName, spotifyUri } = parseSongData(songName);
+    
+    // If we have a Spotify URI, we can get the track directly
+    if (spotifyUri) {
+      try {
+        const trackId = spotifyUri.replace('spotify:track:', '');
+        const response = await fetch(
+          `https://api.spotify.com/v1/tracks/${trackId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            // Token expired, try to refresh
+            const newToken = await SpotifyAuth.refreshAccessToken();
+            if (newToken) {
+              accessTokenRef.current = newToken;
+              return searchTrack(songName);
+            }
+            return null;
+          }
+          throw new Error('Track fetch failed');
+        }
+
+        const track = await response.json();
+        return {
+          uri: track.uri,
+          name: track.name,
+          artist: track.artists.map((a: any) => a.name).join(', ')
+        };
+      } catch (error) {
+        console.error('Error fetching track by ID:', error);
+        // Fall back to search
+      }
+    }
+
+    // Fall back to search by name
     try {
       const response = await fetch(
-        `https://api.spotify.com/v1/search?q=${encodeURIComponent(songName)}&type=track&limit=1`,
+        `https://api.spotify.com/v1/search?q=${encodeURIComponent(displayName)}&type=track&limit=1`,
         {
           headers: {
             'Authorization': `Bearer ${token}`

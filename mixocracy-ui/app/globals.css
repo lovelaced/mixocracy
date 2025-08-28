@@ -952,3 +952,85 @@ h6 { font-size: 0.875rem; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   opacity: 1;
 }
+
+/* Song Search Styles */
+.spotify-search .search-results {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.spotify-search .track-result:hover {
+  background-color: var(--surface-hover) !important;
+}
+
+.spotify-search .track-result:active {
+  background-color: rgba(255, 38, 112, 0.2) !important;
+}
+
+/* Mobile Song Search Fixes */
+@media (max-width: 767px) {
+  .spotify-search {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .spotify-search .search-results {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    max-height: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-bottom: var(--space-sm);
+  }
+  
+  .spotify-search .search-results .track-result {
+    flex-shrink: 0;
+    min-height: 72px;
+    display: flex;
+    align-items: center;
+  }
+  
+  .spotify-search .search-results .track-result:active {
+    background-color: var(--accent-primary) !important;
+    color: white;
+    transform: scale(0.98);
+  }
+  
+  /* Ensure modal contains all content */
+  .fixed.inset-0 {
+    isolation: isolate;
+  }
+  
+  /* Force proper padding for small buttons */
+  .p-sm {
+    padding: var(--space-sm) !important;
+  }
+  
+  /* Ensure proper text sizing */
+  .text-base {
+    font-size: 1rem !important;
+  }
+  
+  /* Album art shadow */
+  .shadow-lg {
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Ensure proper modal behavior on desktop */
+@media (min-width: 768px) {
+  .modal {
+    border: 1px solid var(--border-strong);
+  }
+  
+  .modal-backdrop.hidden {
+    display: none !important;
+  }
+  
+  .modal-backdrop.md\:flex {
+    display: flex !important;
+  }
+}

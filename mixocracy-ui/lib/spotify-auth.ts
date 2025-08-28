@@ -19,6 +19,13 @@ export class SpotifyAuth {
     params.append('code_challenge_method', 'S256');
     params.append('code_challenge', challenge);
 
+    // Debug logging
+    console.log('Spotify Auth Debug:', {
+      clientId: SPOTIFY_CONFIG.clientId,
+      redirectUri: SPOTIFY_CONFIG.redirectUri,
+      authUrl: `https://accounts.spotify.com/authorize?${params.toString()}`
+    });
+
     window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
     return null;
   }
