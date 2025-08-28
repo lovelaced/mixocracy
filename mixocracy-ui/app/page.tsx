@@ -11,11 +11,16 @@ import {
   RadioIcon, 
   Cog6ToothIcon,
   PlayIcon,
-  HandRaisedIcon
+  HandRaisedIcon,
+  MusicalNoteIcon
 } from '@heroicons/react/24/outline';
 import { MIXOCRACY_CONTRACT_ADDRESS } from '@/lib/contract-config';
 import { CustomConnectButton } from '@/components/CustomConnectButton';
-import { truncateError } from '@/lib/utils';
+import { truncateError, parseSongData } from '@/lib/utils';
+import { DjPlayer } from '@/components/DjPlayer';
+import { SpotifySearch } from '@/components/SpotifySearch';
+import { SpotifyTrack } from '@/hooks/useSpotifySearch';
+import Image from 'next/image';
 
 export default function Home() {
   const { isConnected, address } = useAccount();
@@ -34,11 +39,14 @@ export default function Home() {
   const [showAddDjModal, setShowAddDjModal] = useState(false);
   const [showAddSongModal, setShowAddSongModal] = useState(false);
   const [newDjAddress, setNewDjAddress] = useState('');
-  const [newSongName, setNewSongName] = useState('');
+  const [selectedSpotifyTrack, setSelectedSpotifyTrack] = useState<SpotifyTrack | null>(null);
   const [allDjs, setAllDjs] = useState<string[]>([]);
+  const [roleChecked, setRoleChecked] = useState(false);
 
   // Define callback functions first
   const loadActiveDjs = useCallback(async () => {
+    if (!contract.getActiveDjs || !contract.getDjInfo) return;
+    
     try {
       const djs = await contract.getActiveDjs();
       setActiveDjs(djs);
@@ -60,6 +68,8 @@ export default function Home() {
   }, [contract]);
 
   const loadAllDjs = useCallback(async () => {
+    if (!contract.getAllDjs || !contract.getDjInfo) return;
+    
     try {
       const djs = await contract.getAllDjs();
       setAllDjs(djs);
@@ -81,26 +91,24 @@ export default function Home() {
   }, [contract]);
 
   const checkUserRole = useCallback(async () => {
-    if (!address) return;
+    if (!address || !contract.hasProvider || !contract.isDj) return;
     
     try {
       // Check if owner (hardcoded from deployment)
-      setIsOwner(address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467');
+      const isOwnerAddress = address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467';
+      setIsOwner(isOwnerAddress);
       
       // Check if DJ
       const djStatus = await contract.isDj(address);
       setIsDj(djStatus);
-      
-      if (djStatus || address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467') {
-        // Load all DJs if admin or owner
-        loadAllDjs();
-      }
     } catch (error) {
       console.error('Error checking user role:', error);
     }
-  }, [address, contract, loadAllDjs]);
+  }, [address, contract]);
 
   const loadSongs = useCallback(async (djAddress: string) => {
+    if (!contract.getSongCount || !contract.getSong || !contract.getVotes || !contract.getSongsWithVotes || !contract.hasVoted) return;
+    
     try {
       // If loading for self in BOOTH and not live, load songs differently
       if (djAddress === address && activeTab === 'admin' && !activeDjs.includes(djAddress)) {
@@ -127,9 +135,36 @@ export default function Home() {
         setSongs(songList);
       } else {
         // Normal flow for active DJs
-        const songList = await contract.getSongsWithVotes(djAddress);
-        const sortedSongs = songList.sort((a, b) => b.votes - a.votes);
-        setSongs(sortedSongs);
+        try {
+          const songList = await contract.getSongsWithVotes(djAddress);
+          const sortedSongs = songList.sort((a, b) => b.votes - a.votes);
+          setSongs(sortedSongs);
+          
+          // Check which songs the current user has voted for
+          if (address) {
+            const votedSet = new Set<number>();
+            for (const song of sortedSongs) {
+              try {
+                const hasVoted = await contract.hasVoted(address, djAddress, song.id);
+                if (hasVoted) {
+                votedSet.add(song.id);
+              }
+            } catch (error) {
+              console.error('Error checking vote status:', error);
+            }
+          }
+          setVotedSongs(votedSet);
+        }
+        } catch (error) {
+          console.error('Error loading songs for active DJ:', error);
+          // Check if it's the SET_NOT_ACTIVE error
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          if (errorMessage.includes('SET_NOT_ACTIVE')) {
+            console.error('DJ set not active, but should be:', djAddress, 'Active DJs:', activeDjs);
+          }
+          toast.error('Failed to load track queue');
+          setSongs([]);
+        }
       }
     } catch (error) {
       console.error('Error loading songs:', error);
@@ -148,29 +183,65 @@ export default function Home() {
 
   // Check if current user is owner/DJ
   useEffect(() => {
-    if (address && contract.hasProvider) {
-      checkUserRole();
+    if (address && contract.hasProvider && !roleChecked) {
+      checkUserRole().then(() => setRoleChecked(true));
+    } else if (!address) {
+      // Reset role check when disconnected
+      setRoleChecked(false);
+      setIsOwner(false);
+      setIsDj(false);
     }
-  }, [address, contract.hasProvider, checkUserRole]);
+  }, [address, contract.hasProvider, roleChecked, checkUserRole]);
+  
+  // Handle Spotify connection status
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.get('spotify_connected') === 'true') {
+      toast.success('Successfully connected to Spotify!');
+      // Remove query params
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (searchParams.get('spotify_error') === 'true') {
+      toast.error('Failed to connect to Spotify');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+  
+  // Load all DJs when user is owner or DJ
+  useEffect(() => {
+    if (contract.hasProvider && (isOwner || isDj)) {
+      loadAllDjs();
+    }
+  }, [contract.hasProvider, isOwner, isDj, loadAllDjs]);
 
   // Load songs when DJ is selected or when viewing own tracks in BOOTH
   useEffect(() => {
-    if (contract.hasProvider) {
-      if (selectedDj) {
-        loadSongs(selectedDj);
-        const interval = setInterval(() => loadSongs(selectedDj), 5000);
-        return () => clearInterval(interval);
-      } else if (isDj && activeTab === 'admin' && address) {
-        // Load own songs when in BOOTH
-        loadSongs(address);
-      } else if (activeDjs.length === 1 && activeTab === 'live') {
-        // Auto-load songs when there's only one DJ live
-        loadSongs(activeDjs[0]);
-        const interval = setInterval(() => loadSongs(activeDjs[0]), 5000);
-        return () => clearInterval(interval);
-      }
+    if (!contract.hasProvider) return;
+    
+    let interval: NodeJS.Timeout;
+    
+    if (selectedDj) {
+      loadSongs(selectedDj);
+      interval = setInterval(() => loadSongs(selectedDj), 5000);
+    } else if (isDj && activeTab === 'admin' && address) {
+      // Load own songs when in BOOTH
+      loadSongs(address);
+      // Clear voted songs for admin view
+      setVotedSongs(new Set());
+    } else if (activeDjs.length === 1 && (activeTab === 'live' || (!isDj && !isOwner))) {
+      // Auto-load songs when there's only one DJ live
+      loadSongs(activeDjs[0]);
+      interval = setInterval(() => loadSongs(activeDjs[0]), 5000);
+    } else {
+      // Clear songs and voted state when no DJ is selected
+      setSongs([]);
+      setVotedSongs(new Set());
     }
-  }, [selectedDj, isDj, activeTab, address, contract.hasProvider, loadSongs, activeDjs]);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length]);
 
   async function handleVote(songId: number, djAddress?: string) {
     const targetDj = djAddress || selectedDj;
@@ -235,8 +306,14 @@ export default function Home() {
       toast.success('DJ added!');
       setNewDjAddress('');
       setShowAddDjModal(false);
-      // Reload all DJs to show the newly added one
-      loadAllDjs();
+      
+      // Reload all DJs
+      await loadAllDjs();
+      
+      // If the added DJ is the current user, force a role recheck
+      if (address && newDjAddress.toLowerCase() === address.toLowerCase()) {
+        setRoleChecked(false); // This will trigger the useEffect to recheck the role
+      }
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to add DJ');
     } finally {
@@ -261,17 +338,34 @@ export default function Home() {
   }
 
   async function handleAddSong() {
-    if (!newSongName) return;
+    if (!selectedSpotifyTrack) return;
+    
+    // Format: "Artist - Track Name|spotify:track:ID" using | as separator
+    const songToAdd = `${selectedSpotifyTrack.artists[0].name} - ${selectedSpotifyTrack.name}|${selectedSpotifyTrack.uri}`;
     
     setLoading(true);
     try {
-      const tx = await contract.addSong(newSongName);
+      // If user is not a DJ but a DJ is selected, we're suggesting a song
+      const targetDj = selectedDj || address;
+      const isUserSuggesting = !isDj && selectedDj;
+      
+      let tx;
+      if (isUserSuggesting && selectedDj) {
+        // Non-DJ user suggesting a song to an active DJ
+        tx = await contract.suggestSong(selectedDj, songToAdd);
+      } else {
+        // DJ adding a song to their own queue
+        tx = await contract.addSong(songToAdd);
+      }
       await tx.wait();
-      toast.success('Song added!');
-      setNewSongName('');
+      
+      toast.success(isUserSuggesting ? 'Track suggested!' : 'Song added!');
+      setSelectedSpotifyTrack(null);
       setShowAddSongModal(false);
-      if (selectedDj === address) {
-        loadSongs(address);
+      
+      // Reload songs for the target DJ
+      if (targetDj) {
+        loadSongs(targetDj);
       }
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to add song');
@@ -463,7 +557,7 @@ export default function Home() {
                                   #{index + 1}
                                 </span>
                                 <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  <h4 className="font-medium text-sm md:text-base truncate">{parseSongData(song.name).displayName}</h4>
                                   {isNext && (
                                     <span className="badge badge-success text-xs">NEXT UP</span>
                                   )}
@@ -579,74 +673,6 @@ export default function Home() {
                 </div>
               </section>
             )}
-            
-            {/* Song Voting Section */}
-            {selectedDj && isConnected && (
-              <div className="modal-backdrop" onClick={() => setSelectedDj(null)}>
-                <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px' }}>
-                  <div className="modal-header">
-                    <h3 className="modal-title text-lg md:text-xl">
-                      <span className="md:hidden">Vote Now</span>
-                      <span className="hidden md:inline">Vote on Tracks</span>
-                    </h3>
-                    <button
-                      className="btn-icon"
-                      onClick={() => setSelectedDj(null)}
-                    >
-                      <XMarkIcon className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  {songs.length === 0 ? (
-                    <div className="text-center p-xl">
-                      <p className="text-secondary">No tracks loaded yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-sm">
-                      {songs.map((song, index) => {
-                        const hasVoted = votedSongs.has(song.id);
-                        const isNext = index === 0;
-                        
-                        return (
-                          <div
-                            key={song.id}
-                            className={`track-item ${isNext ? 'active' : ''}`}
-                          >
-                            <div className="flex items-center justify-between w-full gap-md">
-                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
-                                <span className="text-tertiary text-xs md:text-sm font-mono">
-                                  #{index + 1}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
-                                  {isNext && (
-                                    <span className="badge badge-success text-xs">NEXT UP</span>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-xs md:gap-sm">
-                                <div className="vote-count text-center">
-                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
-                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
-                                </div>
-                                <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
-                                  onClick={() => handleVote(song.id)}
-                                  disabled={hasVoted || loading}
-                                >
-                                  {hasVoted ? '✓' : 'VOTE'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         ) : (!isOwner && !isDj) ? (
           /* Logged in but not a DJ - show live DJs or direct tracklist */
@@ -655,17 +681,48 @@ export default function Home() {
               {activeDjs.length === 1 ? (
                 // Single DJ - show tracklist directly
                 <>
-                  <div className="flex items-center justify-between mb-lg">
-                    <div>
-                      <h2 className="text-xl font-semibold">Live Now: {formatAddress(activeDjs[0])}</h2>
-                      {djInfoMap.get(activeDjs[0])?.metadata && (
-                        <p className="text-sm text-secondary mt-xs">&ldquo;{djInfoMap.get(activeDjs[0])?.metadata}&rdquo;</p>
-                      )}
+                  <div className="mb-lg">
+                    <div className="flex items-center justify-between mb-md">
+                      <div>
+                        <h2 className="text-xl font-semibold">Live Now: {formatAddress(activeDjs[0])}</h2>
+                        {djInfoMap.get(activeDjs[0])?.metadata && (
+                          <p className="text-sm text-secondary mt-xs">&ldquo;{djInfoMap.get(activeDjs[0])?.metadata}&rdquo;</p>
+                        )}
+                      </div>
+                      <div className="live-indicator hidden md:flex">
+                        <span className="live-dot"></span>
+                        LIVE
+                      </div>
                     </div>
-                    <div className="live-indicator">
-                      <span className="live-dot"></span>
-                      LIVE
-                    </div>
+                    {/* Mobile: Full-width suggest button */}
+                    <button
+                      className="btn btn-primary btn-lg w-full md:hidden"
+                      onClick={() => {
+                        setSelectedDj(activeDjs[0]);
+                        setShowAddSongModal(true);
+                      }}
+                    >
+                      <PlusIcon className="w-5 h-5" />
+                      Suggest a Track
+                    </button>
+                  </div>
+                  
+                  {/* Desktop: Add suggest button between header and track list */}
+                  <div className="hidden md:flex justify-end mb-lg">
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        console.log('Desktop suggest button clicked');
+                        console.log('Current selectedDj:', selectedDj);
+                        console.log('Setting selectedDj to:', activeDjs[0]);
+                        setSelectedDj(activeDjs[0]);
+                        setShowAddSongModal(true);
+                        console.log('showAddSongModal set to true');
+                      }}
+                    >
+                      <PlusIcon className="w-5 h-5" />
+                      Suggest a Track
+                    </button>
                   </div>
                   
                   {songs.length === 0 ? (
@@ -689,7 +746,7 @@ export default function Home() {
                                   #{index + 1}
                                 </span>
                                 <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  <h4 className="font-medium text-sm md:text-base truncate">{parseSongData(song.name).displayName}</h4>
                                   {isNext && (
                                     <span className="badge badge-success text-xs">NEXT UP</span>
                                   )}
@@ -702,11 +759,11 @@ export default function Home() {
                                   <div className="text-xs text-tertiary hidden md:block">votes</div>
                                 </div>
                                 <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                   onClick={() => handleVote(song.id, activeDjs[0])}
                                   disabled={hasVoted || loading}
                                 >
-                                  {hasVoted ? '✓' : 'VOTE'}
+                                  {hasVoted ? '✓' : '↑'}
                                 </button>
                               </div>
                             </div>
@@ -779,73 +836,8 @@ export default function Home() {
                 </>
               )}
             </section>
-            
-            {/* Song Voting Modal */}
-            {selectedDj && (
-              <div className="modal-backdrop" onClick={() => setSelectedDj(null)}>
-                <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px' }}>
-                  <div className="modal-header">
-                    <h3 className="modal-title">Vote on Tracks</h3>
-                    <button
-                      className="btn-icon"
-                      onClick={() => setSelectedDj(null)}
-                    >
-                      <XMarkIcon className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  {songs.length === 0 ? (
-                    <div className="text-center p-xl">
-                      <p className="text-secondary">No tracks loaded yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-sm">
-                      {songs.map((song, index) => {
-                        const hasVoted = votedSongs.has(song.id);
-                        const isNext = index === 0;
-                        
-                        return (
-                          <div
-                            key={song.id}
-                            className={`track-item ${isNext ? 'active' : ''}`}
-                          >
-                            <div className="flex items-center justify-between w-full gap-md">
-                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
-                                <span className="text-tertiary text-xs md:text-sm font-mono">
-                                  #{index + 1}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
-                                  {isNext && (
-                                    <span className="badge badge-success text-xs">NEXT UP</span>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-xs md:gap-sm">
-                                <div className="vote-count text-center">
-                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
-                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
-                                </div>
-                                <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
-                                  onClick={() => handleVote(song.id)}
-                                  disabled={hasVoted || loading}
-                                >
-                                  {hasVoted ? '✓' : 'VOTE'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
-        ) : activeTab === 'live' ? (
+        ) : activeTab === 'live' || (!isDj && !isOwner) ? (
           <div>
             {/* Active DJs */}
             <section>
@@ -870,9 +862,43 @@ export default function Home() {
                     </div>
                   </div>
                   
+                  {/* Mobile: Full-width suggest button */}
+                  {isConnected && (
+                    <button
+                      className="btn btn-primary btn-lg w-full mb-md md:hidden"
+                      onClick={() => {
+                        setSelectedDj(activeDjs[0]);
+                        setShowAddSongModal(true);
+                      }}
+                    >
+                      <PlusIcon className="w-5 h-5" />
+                      Suggest a Track
+                    </button>
+                  )}
+                  
+                  <div className="flex items-center justify-between mb-md">
+                    <h3 className="text-lg font-semibold">Track Queue</h3>
+                    {/* Desktop: Inline button */}
+                    {isConnected && (
+                      <button
+                        className="btn btn-primary btn-sm hidden md:flex"
+                        onClick={() => {
+                          setSelectedDj(activeDjs[0]);
+                          setShowAddSongModal(true);
+                        }}
+                      >
+                        <PlusIcon className="w-4 h-4" />
+                        Suggest a Track
+                      </button>
+                    )}
+                  </div>
+                  
                   {songs.length === 0 ? (
                     <div className="card text-center p-xl">
                       <p className="text-secondary">No tracks in queue</p>
+                      {isConnected && (
+                        <p className="text-sm text-tertiary mt-sm">Be the first to suggest a track!</p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-sm">
@@ -891,7 +917,7 @@ export default function Home() {
                                   #{index + 1}
                                 </span>
                                 <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                  <h4 className="font-medium text-sm md:text-base truncate">{parseSongData(song.name).displayName}</h4>
                                   {isNext && (
                                     <span className="badge badge-success text-xs">NEXT UP</span>
                                   )}
@@ -905,11 +931,11 @@ export default function Home() {
                                 </div>
                                 {isConnected && (
                                   <button
-                                    className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                    className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                     onClick={() => handleVote(song.id, activeDjs[0])}
                                     disabled={hasVoted || loading}
                                   >
-                                    {hasVoted ? '✓' : 'VOTE'}
+                                    {hasVoted ? '✓' : '↑'}
                                   </button>
                                 )}
                               </div>
@@ -979,18 +1005,32 @@ export default function Home() {
               <section className="mt-2xl">
                 <div className="flex items-center justify-between mb-lg">
                   <h2 className="text-xl font-semibold">Song Queue</h2>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setSelectedDj(null)}
-                  >
-                    <XMarkIcon className="w-4 h-4" />
-                    Close
-                  </button>
+                  <div className="flex items-center gap-sm">
+                    {isConnected && (
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => setShowAddSongModal(true)}
+                      >
+                        <PlusIcon className="w-5 h-5" />
+                        Suggest a Track
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setSelectedDj(null)}
+                    >
+                      <XMarkIcon className="w-4 h-4" />
+                      Close
+                    </button>
+                  </div>
                 </div>
                 
                 {songs.length === 0 ? (
                   <div className="card text-center p-xl">
                     <p className="text-secondary">No songs in queue</p>
+                    {isConnected && (
+                      <p className="text-sm text-tertiary mt-sm">Be the first to suggest a track!</p>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-sm">
@@ -1009,7 +1049,7 @@ export default function Home() {
                                 #{index + 1}
                               </span>
                               <div className="flex-1 min-w-0">
-                                <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
+                                <h4 className="font-medium text-sm md:text-base truncate">{parseSongData(song.name).displayName}</h4>
                                 {isNext && (
                                   <span className="badge badge-success text-xs">NEXT UP</span>
                                 )}
@@ -1023,11 +1063,11 @@ export default function Home() {
                               </div>
                               {isConnected && (
                                 <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''} min-w-[60px] md:min-w-[48px]`}
+                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
                                   onClick={() => handleVote(song.id)}
                                   disabled={hasVoted || loading}
                                 >
-                                  {hasVoted ? '✓' : 'VOTE'}
+                                  {hasVoted ? '✓' : '↑'}
                                 </button>
                               )}
                             </div>
@@ -1070,13 +1110,26 @@ export default function Home() {
                     Manage your songs and go live when ready
                   </p>
                   <button
-                    className="btn btn-secondary btn-sm"
+                    className="btn btn-primary"
                     onClick={() => setShowAddSongModal(true)}
                   >
                     <PlusIcon className="w-4 h-4" />
                     Add Song
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Spotify Player */}
+            {isDj && (
+              <div className="mb-xl">
+                <DjPlayer 
+                  songs={songs} 
+                  isLive={activeDjs.includes(address!)}
+                  onSpotifyConnect={() => {
+                    // Optional: Handle post-connection logic
+                  }}
+                />
               </div>
             )}
 
@@ -1095,7 +1148,7 @@ export default function Home() {
                       <div key={song.id} className="track-item">
                         <div className="flex items-center gap-md flex-1">
                           <span className="text-tertiary text-sm font-mono">#{index + 1}</span>
-                          <h4 className="font-medium">{song.name}</h4>
+                          <h4 className="font-medium">{parseSongData(song.name).displayName}</h4>
                         </div>
                         <div className="flex items-center gap-sm">
                           <span className="text-sm text-secondary">{song.votes} votes</span>
@@ -1151,7 +1204,10 @@ export default function Home() {
                         
                         <div className="flex items-center gap-sm">
                           {isActive && (
-                            <div className="badge badge-success">LIVE</div>
+                            <div className="live-indicator">
+                              <span className="live-dot"></span>
+                              LIVE
+                            </div>
                           )}
                           {isOwner && djAddress !== address && (
                             <button
@@ -1245,51 +1301,222 @@ export default function Home() {
 
       {/* Add Song Modal */}
       {showAddSongModal && (
-        <div className="modal-backdrop" onClick={() => setShowAddSongModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3 className="modal-title">Add New Song</h3>
-              <button
-                className="btn-icon"
-                onClick={() => setShowAddSongModal(false)}
-              >
-                <XMarkIcon className="w-5 h-5" />
-              </button>
+        <>
+          {/* Mobile: Full screen overlay */}
+          <div className="md:hidden fixed inset-0 z-50 flex flex-col bg-background-primary">
+            {/* Background gradient effect */}
+            <div 
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: `
+                  radial-gradient(ellipse at 20% 80%, rgba(255, 38, 112, 0.08) 0%, transparent 50%),
+                  radial-gradient(ellipse at 80% 20%, rgba(7, 255, 255, 0.05) 0%, transparent 50%),
+                  radial-gradient(ellipse at 50% 50%, rgba(176, 38, 255, 0.03) 0%, transparent 50%)
+                `
+              }}
+            />
+            
+            {/* Backdrop blur overlay with darkening */}
+            <div className="absolute inset-0 backdrop-blur-md bg-black/30 pointer-events-none" />
+            
+            <div className="relative flex flex-col">
+              <div className="h-12" /> {/* Spacer for top margin */}
+              <div className="px-md pb-6 pt-2 border-b border-subtle bg-background-secondary/90">
+                <h3 className="text-base font-semibold uppercase tracking-wider text-secondary text-center">
+                  {selectedSpotifyTrack ? 'READY TO ADD' : 'SEARCH SONGS'}
+                </h3>
+              </div>
             </div>
             
-            <div className="space-y-md">
-              <div>
-                <label className="block text-sm font-medium mb-sm">
-                  Song Name
-                </label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="Enter song name..."
-                  value={newSongName}
-                  onChange={(e) => setNewSongName(e.target.value)}
-                />
-              </div>
-              
-              <div className="flex gap-sm justify-end">
+            <div className="relative flex-1 flex flex-col">
+              {selectedSpotifyTrack ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-md">
+                  <div className="w-full max-w-sm">
+                    <div className="mb-md">
+                      {selectedSpotifyTrack.album.images && selectedSpotifyTrack.album.images.length > 0 ? (
+                        <Image 
+                          src={selectedSpotifyTrack.album.images[0].url} 
+                          alt={selectedSpotifyTrack.album.name}
+                          width={160}
+                          height={160}
+                          className="rounded-lg shadow-lg mx-auto"
+                        />
+                      ) : (
+                        <div className="w-40 h-40 rounded-lg bg-surface-card/60 flex items-center justify-center mx-auto">
+                          <MusicalNoteIcon className="w-16 h-16 text-tertiary" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-center space-y-xs mb-md">
+                      <h3 className="font-bold text-xl">{selectedSpotifyTrack.name}</h3>
+                      <p className="text-base text-secondary">
+                        {selectedSpotifyTrack.artists.map(a => a.name).join(', ')}
+                      </p>
+                      <p className="text-sm text-tertiary">{selectedSpotifyTrack.album.name}</p>
+                    </div>
+                    <button
+                      className="btn btn-ghost btn-sm w-full"
+                      onClick={() => setSelectedSpotifyTrack(null)}
+                    >
+                      Change Selection
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col p-md">
+                  <SpotifySearch
+                    onSelectTrack={(track: SpotifyTrack) => {
+                      setSelectedSpotifyTrack(track);
+                    }}
+                    placeholder="Search artist or song..."
+                  />
+                </div>
+              )}
+            </div>
+            
+            {/* Mobile: Fixed buttons at bottom */}
+            <div className="relative px-md py-md bg-background-secondary/80 border-t border-subtle">
+              {selectedSpotifyTrack ? (
+                <div className="flex gap-sm">
+                  <button
+                    className="btn btn-ghost flex-1 py-3"
+                    onClick={() => setSelectedSpotifyTrack(null)}
+                  >
+                    Back
+                  </button>
+                  <button
+                    className="btn btn-primary flex-1 py-3"
+                    onClick={handleAddSong}
+                    disabled={loading}
+                  >
+                    {loading ? 'Adding...' : 'Add Track'}
+                  </button>
+                </div>
+              ) : (
                 <button
-                  className="btn btn-ghost"
-                  onClick={() => setShowAddSongModal(false)}
+                  className="btn btn-ghost w-full py-3"
+                  onClick={() => {
+                    setShowAddSongModal(false);
+                    setSelectedSpotifyTrack(null);
+                  }}
                 >
                   Cancel
                 </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleAddSong}
-                  disabled={!newSongName || loading}
-                >
-                  Add Song
-                </button>
-              </div>
+              )}
             </div>
           </div>
-        </div>
+
+          {/* Desktop: Large modal with mobile-like design */}
+          <div className="hidden md:flex fixed inset-0 z-50 items-center justify-center">
+            <div 
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowAddSongModal(false)}
+            />
+            
+            <div className="relative w-full max-w-2xl h-[600px] min-h-[600px] bg-background-primary rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                {/* Background gradient effect */}
+                <div 
+                  className="absolute inset-0 pointer-events-none rounded-2xl"
+                  style={{
+                    background: `
+                      radial-gradient(ellipse at 20% 80%, rgba(255, 38, 112, 0.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 80% 20%, rgba(7, 255, 255, 0.05) 0%, transparent 50%),
+                      radial-gradient(ellipse at 50% 50%, rgba(176, 38, 255, 0.03) 0%, transparent 50%)
+                    `
+                  }}
+                />
+                
+                {/* Header */}
+                <div style={{ paddingLeft: '32px', paddingRight: '32px', paddingBottom: '24px', paddingTop: '24px', borderBottom: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(30,30,30,0.8)' }}>
+                  <h3 className="text-lg font-semibold uppercase tracking-wider text-secondary text-center">
+                    {selectedSpotifyTrack ? 'READY TO ADD' : 'SEARCH SONGS'}
+                  </h3>
+                </div>
+                
+                {/* Content */}
+                <div className="relative flex-1 overflow-y-auto flex flex-col">
+                  {selectedSpotifyTrack ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8">
+                      <div className="w-full max-w-sm">
+                        <div className="mb-8">
+                          {selectedSpotifyTrack.album.images && selectedSpotifyTrack.album.images.length > 0 ? (
+                            <Image 
+                              src={selectedSpotifyTrack.album.images[0].url} 
+                              alt={selectedSpotifyTrack.album.name}
+                              width={200}
+                              height={200}
+                              className="rounded-xl shadow-lg mx-auto"
+                            />
+                          ) : (
+                            <div className="w-[200px] h-[200px] rounded-xl bg-surface-card/60 flex items-center justify-center mx-auto">
+                              <MusicalNoteIcon className="w-20 h-20 text-tertiary" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-center space-y-2 mb-8">
+                          <h3 className="font-bold text-2xl">{selectedSpotifyTrack.name}</h3>
+                          <p className="text-lg text-secondary">
+                            {selectedSpotifyTrack.artists.map(a => a.name).join(', ')}
+                          </p>
+                          <p className="text-sm text-tertiary">{selectedSpotifyTrack.album.name}</p>
+                        </div>
+                        <button
+                          className="btn btn-ghost btn-sm w-full"
+                          onClick={() => setSelectedSpotifyTrack(null)}
+                        >
+                          Change Selection
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '32px', overflow: 'hidden' }}>
+                      <div className="flex-1 flex flex-col min-h-0">
+                        <SpotifySearch
+                          onSelectTrack={(track: SpotifyTrack) => {
+                            setSelectedSpotifyTrack(track);
+                          }}
+                          placeholder="Search artist or song..."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Footer buttons */}
+                <div className="relative px-8 py-6 bg-background-secondary/50 border-t border-subtle">
+                  {selectedSpotifyTrack ? (
+                    <div className="flex gap-4">
+                      <button
+                        className="btn btn-ghost flex-1"
+                        onClick={() => setSelectedSpotifyTrack(null)}
+                      >
+                        Back
+                      </button>
+                      <button
+                        className="btn btn-primary flex-1"
+                        onClick={handleAddSong}
+                        disabled={loading}
+                      >
+                        {loading ? 'Adding...' : 'Add Track'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn btn-ghost w-full"
+                      onClick={() => {
+                        setShowAddSongModal(false);
+                        setSelectedSpotifyTrack(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+        </>
       )}
+
     </>
   );
 }

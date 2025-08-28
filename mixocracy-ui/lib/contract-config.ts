@@ -1,6 +1,6 @@
 import mixocracyAbi from './mixocracy-abi.json';
 
-export const MIXOCRACY_CONTRACT_ADDRESS = '0x42223629303D674AD30338760A6663F9A93484D9' as const;
+export const MIXOCRACY_CONTRACT_ADDRESS = '0xc266af4f9e53Efc34E9213D36a60dcA6b74C2e5b' as const;
 export const MIXOCRACY_ABI = mixocracyAbi;
 
 // Type for song data

@@ -30,7 +30,7 @@ export const westendAssetHub = defineChain({
 
 export const config = getDefaultConfig({
   appName: 'Mixocracy',
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID',
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '615236977daa232596793212be188282',
   chains: [westendAssetHub],
   ssr: true,
 });

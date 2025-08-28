@@ -121,7 +121,7 @@ export const CustomConnectButton = () => {
                   <button 
                     onClick={openAccountModal} 
                     type="button"
-                    className="btn btn-primary btn-sm"
+                    className="btn btn-secondary btn-sm"
                   >
                     <span className="hidden md:inline">{account.displayName}</span>
                     <span className="md:hidden">{account.address.slice(0, 6)}...</span>

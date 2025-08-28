@@ -17,6 +17,25 @@ A decentralized DJ voting platform built on Westend Asset Hub.
 - Tailwind CSS v4 for styling
 - TypeScript for type safety
 
+## Environment Variables
+
+Create a `.env.local` file for development:
+
+```
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_project_id
+NEXT_PUBLIC_SPOTIFY_CLIENT_ID=your_spotify_client_id
+NEXT_PUBLIC_SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/spotify-callback
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+```
+
+For production, create `.env.production` with your production values.
+
+**Security Notes:**
+- Never commit `.env` files to version control
+- `.env*` files are already in `.gitignore`
+- `SPOTIFY_CLIENT_SECRET` should never be exposed to the client
+- Keep production credentials secure
+
 ## Development
 
 ```bash

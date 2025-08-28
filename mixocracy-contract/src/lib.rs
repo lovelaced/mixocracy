@@ -25,6 +25,7 @@ const PREFIX_ACTIVE_DJ_COUNT: u8 = 10;
 const PREFIX_ALL_DJS: u8 = 11;
 const PREFIX_ALL_DJ_COUNT: u8 = 12;
 const PREFIX_SONG_REMOVED: u8 = 13;
+const PREFIX_SET_END_TIME: u8 = 14;
 
 // Function selectors computed from ethers.js keccak256
 const SELECTOR_REGISTER_DJ: [u8; 4] = [0x19, 0xc2, 0x36, 0xc0]; // registerDj(address)
@@ -48,6 +49,9 @@ const SELECTOR_GET_DJ_INFO: [u8; 4] = [0xe9, 0x23, 0x0c, 0x05]; // getDjInfo(add
 const SELECTOR_GET_TOP_SONGS: [u8; 4] = [0xe7, 0xb9, 0x6e, 0x73]; // getTopSongs(address,uint256)
 const SELECTOR_GET_ALL_DJS: [u8; 4] = [0xa2, 0xf8, 0x2c, 0x28]; // getAllDjs()
 const SELECTOR_REMOVE_SONG: [u8; 4] = [0xd4, 0x34, 0x2c, 0xc7]; // removeSong(uint256)
+const SELECTOR_SUGGEST_SONG: [u8; 4] = [0x01, 0x72, 0x5a, 0xa1]; // suggestSong(address,string)
+const SELECTOR_GET_ALL_SONGS_WITH_VOTES: [u8; 4] = [0x47, 0xf8, 0xdc, 0x84]; // getAllSongsWithVotes(address)
+const SELECTOR_GET_DJ_INFO_EXTENDED: [u8; 4] = [0x6c, 0x44, 0xd3, 0x19]; // getDjInfoExtended(address)
 
 // Helper functions for storage keys
 fn get_dj_key(dj_address: &[u8; 20]) -> [u8; 32] {
@@ -111,6 +115,13 @@ fn get_set_active_key(dj_address: &[u8; 20]) -> [u8; 32] {
 fn get_set_start_time_key(dj_address: &[u8; 20]) -> [u8; 32] {
     let mut key = [0u8; 32];
     key[0] = PREFIX_SET_START_TIME;
+    key[1..21].copy_from_slice(dj_address);
+    key
+}
+
+fn get_set_end_time_key(dj_address: &[u8; 20]) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    key[0] = PREFIX_SET_END_TIME;
     key[1..21].copy_from_slice(dj_address);
     key
 }
@@ -272,6 +283,29 @@ fn add_song(song_name: Vec<u8>) -> u32 {
     song_id
 }
 
+fn suggest_song(dj_address: [u8; 20], song_name: Vec<u8>) -> u32 {
+    // Check that the target is a registered DJ
+    assert!(get_bool(&get_dj_key(&dj_address)), "TARGET_NOT_DJ");
+    
+    // Check that the DJ is currently active
+    assert!(get_bool(&get_set_active_key(&dj_address)), "DJ_NOT_ACTIVE");
+    
+    // Validate song name
+    assert!(song_name.len() > 0, "EMPTY_SONG_NAME");
+    assert!(song_name.len() <= 256, "SONG_NAME_TOO_LONG");
+    
+    // Add song to DJ's queue
+    let count_key = get_song_count_key(&dj_address);
+    let song_id = get_u32(&count_key);
+    
+    let song_key = get_song_key(&dj_address, song_id);
+    save_string(&song_key, &song_name);
+    
+    save_u32(&count_key, song_id + 1);
+    
+    song_id
+}
+
 fn remove_song(song_id: u32) {
     let origin = get_origin();
     
@@ -357,7 +391,7 @@ fn start_set(dj_address: [u8; 20]) {
     
     // Mark set as active
     save_bool(&get_set_active_key(&dj_address), true);
-    save_u64(&get_set_start_time_key(&dj_address), get_block_timestamp());
+    save_u64(&get_set_start_time_key(&dj_address), get_timestamp());
     
     // Add to active DJs list
     let count_key = get_active_dj_count_key();
@@ -375,6 +409,9 @@ fn stop_set(dj_address: [u8; 20]) {
     
     // Mark set as inactive
     save_bool(&get_set_active_key(&dj_address), false);
+    
+    // Record end time for historical purposes
+    save_u64(&get_set_end_time_key(&dj_address), get_timestamp());
     
     // Remove from active DJs list
     remove_from_active_djs(&dj_address);
@@ -459,6 +496,25 @@ fn get_songs_with_votes(dj_address: [u8; 20]) -> Vec<(u32, Vec<u8>, u32)> {
     songs
 }
 
+// Get historical songs with votes (works for inactive sets too)
+fn get_all_songs_with_votes(dj_address: [u8; 20]) -> Vec<(u32, Vec<u8>, u32)> {
+    let song_count = get_song_count(dj_address);
+    let mut songs = Vec::new();
+    
+    for i in 0..song_count {
+        // Skip removed songs
+        if is_song_removed(dj_address, i) {
+            continue;
+        }
+        
+        let song = get_song(dj_address, i);
+        let votes = get_votes(dj_address, i);
+        songs.push((i, song, votes));
+    }
+    
+    songs
+}
+
 fn get_top_songs(dj_address: [u8; 20], limit: u32) -> Vec<(u32, Vec<u8>, u32)> {
     let mut songs = get_songs_with_votes(dj_address);
     
@@ -490,15 +546,24 @@ fn get_dj_metadata(dj_address: [u8; 20]) -> Vec<u8> {
 fn get_dj_info(dj_address: [u8; 20]) -> (bool, bool, u64, u32, Vec<u8>) {
     let is_registered = is_dj(dj_address);
     let is_active = is_set_active(dj_address);
-    let start_time = if is_active {
-        get_u64(&get_set_start_time_key(&dj_address))
-    } else {
-        0
-    };
+    // Always return the last start time for historical purposes
+    let start_time = get_u64(&get_set_start_time_key(&dj_address));
     let song_count = get_song_count(dj_address);
     let metadata = get_dj_metadata(dj_address);
     
     (is_registered, is_active, start_time, song_count, metadata)
+}
+
+// Extended DJ info including end time for historical data
+fn get_dj_info_extended(dj_address: [u8; 20]) -> (bool, bool, u64, u64, u32, Vec<u8>) {
+    let is_registered = is_dj(dj_address);
+    let is_active = is_set_active(dj_address);
+    let start_time = get_u64(&get_set_start_time_key(&dj_address));
+    let end_time = get_u64(&get_set_end_time_key(&dj_address));
+    let song_count = get_song_count(dj_address);
+    let metadata = get_dj_metadata(dj_address);
+    
+    (is_registered, is_active, start_time, end_time, song_count, metadata)
 }
 
 // Storage helpers for u64
@@ -514,10 +579,12 @@ fn get_u64(key: &[u8; 32]) -> u64 {
     }
 }
 
-fn get_block_timestamp() -> u64 {
-    // In a real implementation, this would get the actual block timestamp
-    // For now, return a placeholder
-    0
+fn get_timestamp() -> u64 {
+    let mut timestamp_bytes = [0u8; 32];
+    api::now(&mut timestamp_bytes);
+    let mut timestamp_u64_bytes = [0u8; 8];
+    timestamp_u64_bytes.copy_from_slice(&timestamp_bytes[0..8]);
+    u64::from_le_bytes(timestamp_u64_bytes)
 }
 
 fn dispatch(selector: [u8; 4], data: &[u8]) {
@@ -788,6 +855,55 @@ fn dispatch(selector: [u8; 4], data: &[u8]) {
             };
             remove_song(song_id);
             api::return_value(ReturnFlags::empty(), &encode(&[Token::Bool(true)]));
+        },
+        SELECTOR_SUGGEST_SONG => {
+            let decoded = decode(&[ParamType::Address, ParamType::String], data)
+                .expect("Failed to decode params");
+            let mut dj_address = [0u8; 20];
+            if let Token::Address(addr) = &decoded[0] {
+                dj_address.copy_from_slice(&addr.0);
+            }
+            let song_name = if let Token::String(name) = &decoded[1] {
+                name.clone().into_bytes()
+            } else {
+                panic!("Invalid song name");
+            };
+            let song_id = suggest_song(dj_address, song_name);
+            api::return_value(ReturnFlags::empty(), &encode(&[Token::Uint(song_id.into())]));
+        },
+        SELECTOR_GET_ALL_SONGS_WITH_VOTES => {
+            let decoded = decode(&[ParamType::Address], data)
+                .expect("Failed to decode params");
+            let mut dj_address = [0u8; 20];
+            if let Token::Address(addr) = &decoded[0] {
+                dj_address.copy_from_slice(&addr.0);
+            }
+            let songs = get_all_songs_with_votes(dj_address);
+            let encoded_songs: Vec<Token> = songs.iter().map(|(id, name, votes)| {
+                Token::Tuple(vec![
+                    Token::Uint((*id).into()),
+                    Token::String(String::from_utf8_lossy(name).into_owned()),
+                    Token::Uint((*votes).into())
+                ])
+            }).collect();
+            api::return_value(ReturnFlags::empty(), &encode(&[Token::Array(encoded_songs)]));
+        },
+        SELECTOR_GET_DJ_INFO_EXTENDED => {
+            let decoded = decode(&[ParamType::Address], data)
+                .expect("Failed to decode params");
+            let mut dj_address = [0u8; 20];
+            if let Token::Address(addr) = &decoded[0] {
+                dj_address.copy_from_slice(&addr.0);
+            }
+            let (is_registered, is_active, start_time, end_time, song_count, metadata) = get_dj_info_extended(dj_address);
+            api::return_value(ReturnFlags::empty(), &encode(&[Token::Tuple(vec![
+                Token::Bool(is_registered),
+                Token::Bool(is_active),
+                Token::Uint(start_time.into()),
+                Token::Uint(end_time.into()),
+                Token::Uint(song_count.into()),
+                Token::String(String::from_utf8_lossy(&metadata).into_owned())
+            ])]));
         },
         _ => {
             // Unknown selector - handle as fallback
