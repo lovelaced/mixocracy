@@ -26,6 +26,7 @@ const SELECTORS = {
   getDjInfo: '0xe9230c05', // getDjInfo(address)
   getAllDjs: '0xa2f82c28', // getAllDjs()
   removeSong: '0xd4342cc7', // removeSong(uint256)
+  suggestSong: '0x01725aa1', // suggestSong(address,string)
 };
 
 // Helper functions
@@ -219,6 +220,10 @@ export function useMixocracyContract() {
     return sendTransaction(SELECTORS.removeSong, ['uint256'], [songId]);
   };
 
+  const suggestSong = async (djAddress: string, songName: string) => {
+    return sendTransaction(SELECTORS.suggestSong, ['address', 'string'], [djAddress, songName]);
+  };
+
   // DJ Metadata Functions
   const setDjMetadata = async (djAddress: string, metadata: string) => {
     return sendTransaction(SELECTORS.setDjMetadata, ['address', 'string'], [djAddress, metadata]);
@@ -261,6 +266,7 @@ export function useMixocracyContract() {
     getSongsWithVotes,
     getTopSongs,
     removeSong,
+    suggestSong,
     // Voting
     vote,
     getVotes,

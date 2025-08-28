@@ -16,6 +16,7 @@ import {
 import { MIXOCRACY_CONTRACT_ADDRESS } from '@/lib/contract-config';
 import { CustomConnectButton } from '@/components/CustomConnectButton';
 import { truncateError } from '@/lib/utils';
+import { DjPlayer } from '@/components/DjPlayer';
 
 export default function Home() {
   const { isConnected, address } = useAccount();
@@ -60,7 +61,7 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading active DJs:', error);
     }
-  }, [contract.getActiveDjs, contract.getDjInfo]);
+  }, [contract]);
 
   const loadAllDjs = useCallback(async () => {
     if (!contract.getAllDjs || !contract.getDjInfo) return;
@@ -83,7 +84,7 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading all DJs:', error);
     }
-  }, [contract.getAllDjs, contract.getDjInfo]);
+  }, [contract]);
 
   const checkUserRole = useCallback(async () => {
     if (!address || !contract.hasProvider || !contract.isDj) return;
@@ -99,7 +100,7 @@ export default function Home() {
     } catch (error) {
       console.error('Error checking user role:', error);
     }
-  }, [address, contract.isDj, contract.hasProvider]);
+  }, [address, contract]);
 
   const loadSongs = useCallback(async (djAddress: string) => {
     if (!contract.getSongCount || !contract.getSong || !contract.getVotes || !contract.getSongsWithVotes || !contract.hasVoted) return;
@@ -130,17 +131,18 @@ export default function Home() {
         setSongs(songList);
       } else {
         // Normal flow for active DJs
-        const songList = await contract.getSongsWithVotes(djAddress);
-        const sortedSongs = songList.sort((a, b) => b.votes - a.votes);
-        setSongs(sortedSongs);
-        
-        // Check which songs the current user has voted for
-        if (address) {
-          const votedSet = new Set<number>();
-          for (const song of sortedSongs) {
-            try {
-              const hasVoted = await contract.hasVoted(address, djAddress, song.id);
-              if (hasVoted) {
+        try {
+          const songList = await contract.getSongsWithVotes(djAddress);
+          const sortedSongs = songList.sort((a, b) => b.votes - a.votes);
+          setSongs(sortedSongs);
+          
+          // Check which songs the current user has voted for
+          if (address) {
+            const votedSet = new Set<number>();
+            for (const song of sortedSongs) {
+              try {
+                const hasVoted = await contract.hasVoted(address, djAddress, song.id);
+                if (hasVoted) {
                 votedSet.add(song.id);
               }
             } catch (error) {
@@ -149,12 +151,22 @@ export default function Home() {
           }
           setVotedSongs(votedSet);
         }
+        } catch (error) {
+          console.error('Error loading songs for active DJ:', error);
+          // Check if it's the SET_NOT_ACTIVE error
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          if (errorMessage.includes('SET_NOT_ACTIVE')) {
+            console.error('DJ set not active, but should be:', djAddress, 'Active DJs:', activeDjs);
+          }
+          toast.error('Failed to load track queue');
+          setSongs([]);
+        }
       }
     } catch (error) {
       console.error('Error loading songs:', error);
       setSongs([]);
     }
-  }, [address, activeTab, activeDjs, contract.getSongCount, contract.getSong, contract.getVotes, contract.getSongsWithVotes, contract.hasVoted]);
+  }, [address, activeTab, activeDjs, contract]);
 
   // Load active DJs
   useEffect(() => {
@@ -176,6 +188,19 @@ export default function Home() {
       setIsDj(false);
     }
   }, [address, contract.hasProvider, roleChecked, checkUserRole]);
+  
+  // Handle Spotify connection status
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.get('spotify_connected') === 'true') {
+      toast.success('Successfully connected to Spotify!');
+      // Remove query params
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (searchParams.get('spotify_error') === 'true') {
+      toast.error('Failed to connect to Spotify');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
   
   // Load all DJs when user is owner or DJ
   useEffect(() => {
@@ -277,8 +302,14 @@ export default function Home() {
       toast.success('DJ added!');
       setNewDjAddress('');
       setShowAddDjModal(false);
-      // Reload all DJs to show the newly added one
-      loadAllDjs();
+      
+      // Reload all DJs
+      await loadAllDjs();
+      
+      // If the added DJ is the current user, force a role recheck
+      if (address && newDjAddress.toLowerCase() === address.toLowerCase()) {
+        setRoleChecked(false); // This will trigger the useEffect to recheck the role
+      }
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to add DJ');
     } finally {
@@ -307,13 +338,27 @@ export default function Home() {
     
     setLoading(true);
     try {
-      const tx = await contract.addSong(newSongName);
+      // If user is not a DJ but a DJ is selected, we're suggesting a song
+      const targetDj = selectedDj || address;
+      const isUserSuggesting = !isDj && selectedDj;
+      
+      let tx;
+      if (isUserSuggesting && selectedDj) {
+        // Non-DJ user suggesting a song to an active DJ
+        tx = await contract.suggestSong(selectedDj, newSongName);
+      } else {
+        // DJ adding a song to their own queue
+        tx = await contract.addSong(newSongName);
+      }
       await tx.wait();
-      toast.success('Song added!');
+      
+      toast.success(isUserSuggesting ? 'Track suggested!' : 'Song added!');
       setNewSongName('');
       setShowAddSongModal(false);
-      if (selectedDj === address) {
-        loadSongs(address);
+      
+      // Reload songs for the target DJ
+      if (targetDj) {
+        loadSongs(targetDj);
       }
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to add song');
@@ -621,74 +666,6 @@ export default function Home() {
                 </div>
               </section>
             )}
-            
-            {/* Song Voting Section */}
-            {selectedDj && isConnected && (
-              <div className="modal-backdrop" onClick={() => setSelectedDj(null)}>
-                <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px' }}>
-                  <div className="modal-header">
-                    <h3 className="modal-title text-lg md:text-xl">
-                      <span className="md:hidden">Vote Now</span>
-                      <span className="hidden md:inline">Vote on Tracks</span>
-                    </h3>
-                    <button
-                      className="btn-icon"
-                      onClick={() => setSelectedDj(null)}
-                    >
-                      <XMarkIcon className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  {songs.length === 0 ? (
-                    <div className="text-center p-xl">
-                      <p className="text-secondary">No tracks loaded yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-sm">
-                      {songs.map((song, index) => {
-                        const hasVoted = votedSongs.has(song.id);
-                        const isNext = index === 0;
-                        
-                        return (
-                          <div
-                            key={song.id}
-                            className={`track-item ${isNext ? 'active' : ''}`}
-                          >
-                            <div className="flex items-center justify-between w-full gap-md">
-                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
-                                <span className="text-tertiary text-xs md:text-sm font-mono">
-                                  #{index + 1}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
-                                  {isNext && (
-                                    <span className="badge badge-success text-xs">NEXT UP</span>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-xs md:gap-sm">
-                                <div className="vote-count text-center">
-                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
-                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
-                                </div>
-                                <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                  onClick={() => handleVote(song.id)}
-                                  disabled={hasVoted || loading}
-                                >
-                                  {hasVoted ? '✓' : '↑'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         ) : (!isOwner && !isDj) ? (
           /* Logged in but not a DJ - show live DJs or direct tracklist */
@@ -704,9 +681,21 @@ export default function Home() {
                         <p className="text-sm text-secondary mt-xs">&ldquo;{djInfoMap.get(activeDjs[0])?.metadata}&rdquo;</p>
                       )}
                     </div>
-                    <div className="live-indicator">
-                      <span className="live-dot"></span>
-                      LIVE
+                    <div className="flex items-center gap-md">
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          setSelectedDj(activeDjs[0]);
+                          setShowAddSongModal(true);
+                        }}
+                      >
+                        <PlusIcon className="w-4 h-4" />
+                        Suggest Track
+                      </button>
+                      <div className="live-indicator">
+                        <span className="live-dot"></span>
+                        LIVE
+                      </div>
                     </div>
                   </div>
                   
@@ -821,71 +810,6 @@ export default function Home() {
                 </>
               )}
             </section>
-            
-            {/* Song Voting Modal */}
-            {selectedDj && (
-              <div className="modal-backdrop" onClick={() => setSelectedDj(null)}>
-                <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px' }}>
-                  <div className="modal-header">
-                    <h3 className="modal-title">Vote on Tracks</h3>
-                    <button
-                      className="btn-icon"
-                      onClick={() => setSelectedDj(null)}
-                    >
-                      <XMarkIcon className="w-5 h-5" />
-                    </button>
-                  </div>
-                  
-                  {songs.length === 0 ? (
-                    <div className="text-center p-xl">
-                      <p className="text-secondary">No tracks loaded yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-sm">
-                      {songs.map((song, index) => {
-                        const hasVoted = votedSongs.has(song.id);
-                        const isNext = index === 0;
-                        
-                        return (
-                          <div
-                            key={song.id}
-                            className={`track-item ${isNext ? 'active' : ''}`}
-                          >
-                            <div className="flex items-center justify-between w-full gap-md">
-                              <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
-                                <span className="text-tertiary text-xs md:text-sm font-mono">
-                                  #{index + 1}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <h4 className="font-medium text-sm md:text-base truncate">{song.name}</h4>
-                                  {isNext && (
-                                    <span className="badge badge-success text-xs">NEXT UP</span>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="flex items-center gap-xs md:gap-sm">
-                                <div className="vote-count text-center">
-                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
-                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
-                                </div>
-                                <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                  onClick={() => handleVote(song.id)}
-                                  disabled={hasVoted || loading}
-                                >
-                                  {hasVoted ? '✓' : '↑'}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         ) : activeTab === 'live' ? (
           <div>
@@ -912,9 +836,28 @@ export default function Home() {
                     </div>
                   </div>
                   
+                  <div className="flex items-center justify-between mb-md">
+                    <h3 className="text-lg font-semibold">Track Queue</h3>
+                    {isConnected && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => {
+                          setSelectedDj(activeDjs[0]);
+                          setShowAddSongModal(true);
+                        }}
+                      >
+                        <PlusIcon className="w-4 h-4" />
+                        Suggest Track
+                      </button>
+                    )}
+                  </div>
+                  
                   {songs.length === 0 ? (
                     <div className="card text-center p-xl">
                       <p className="text-secondary">No tracks in queue</p>
+                      {isConnected && (
+                        <p className="text-sm text-tertiary mt-sm">Be the first to suggest a track!</p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-sm">
@@ -1021,18 +964,32 @@ export default function Home() {
               <section className="mt-2xl">
                 <div className="flex items-center justify-between mb-lg">
                   <h2 className="text-xl font-semibold">Song Queue</h2>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setSelectedDj(null)}
-                  >
-                    <XMarkIcon className="w-4 h-4" />
-                    Close
-                  </button>
+                  <div className="flex items-center gap-sm">
+                    {isConnected && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setShowAddSongModal(true)}
+                      >
+                        <PlusIcon className="w-4 h-4" />
+                        Suggest Track
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setSelectedDj(null)}
+                    >
+                      <XMarkIcon className="w-4 h-4" />
+                      Close
+                    </button>
+                  </div>
                 </div>
                 
                 {songs.length === 0 ? (
                   <div className="card text-center p-xl">
                     <p className="text-secondary">No songs in queue</p>
+                    {isConnected && (
+                      <p className="text-sm text-tertiary mt-sm">Be the first to suggest a track!</p>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-sm">
@@ -1119,6 +1076,19 @@ export default function Home() {
                     Add Song
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Spotify Player */}
+            {isDj && (
+              <div className="mb-xl">
+                <DjPlayer 
+                  songs={songs} 
+                  isLive={activeDjs.includes(address!)}
+                  onSpotifyConnect={() => {
+                    // Optional: Handle post-connection logic
+                  }}
+                />
               </div>
             )}
 

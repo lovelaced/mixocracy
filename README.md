@@ -6,6 +6,8 @@ A decentralized DJ voting platform where the dancefloor decides what plays next.
 
 Mixocracy is a Web3 application that enables real-time crowd-sourced DJ sets. DJs can go live, upload their tracklists, and let the audience vote on what plays next. The platform features a Berlin techno aesthetic with a dark theme and neon accents.
 
+**New in v2**: Spotify integration allows DJs to automatically play tracks in voted order using the Web Playback SDK.
+
 ## Project Structure
 
 ```
@@ -101,6 +103,13 @@ npm install
 npm run dev
 ```
 
+### Spotify Integration Setup
+
+For Spotify features, see [SPOTIFY_SETUP.md](SPOTIFY_SETUP.md). Key requirements:
+- Spotify Developer App with Client ID and Secret
+- Spotify Premium account (for Web Playback SDK)
+- Environment variables configured in `.env.local`
+
 ### Key Features
 
 - **Wallet Integration**: RainbowKit with custom theming
@@ -108,6 +117,11 @@ npm run dev
 - **Responsive Design**: Mobile-first approach
 - **Custom Hook**: `useMixocracyContract` for contract interaction
 - **Direct Contract Calls**: Using function selectors without ABI
+- **Spotify Integration**: 
+  - Web Playback SDK for in-browser playback
+  - Automatic track search and queuing
+  - Play tracks in voted order
+  - Full playback controls for DJs
 
 ### Contract Integration
 
