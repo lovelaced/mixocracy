@@ -42,8 +42,8 @@ export function SpotifySearch({ onSelectTrack, placeholder = "Search Spotify tra
   };
 
   return (
-    <div className="spotify-search flex-1 flex flex-col">
-      <div className="relative mb-md">
+    <div className="spotify-search flex-1 flex flex-col h-full">
+      <div className="relative mb-md flex-shrink-0">
         <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-tertiary pointer-events-none" />
         <input
           type="text"
@@ -60,7 +60,7 @@ export function SpotifySearch({ onSelectTrack, placeholder = "Search Spotify tra
         />
       </div>
       
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0">
         {loading && (
           <div className="flex-1 flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent" />
@@ -68,7 +68,7 @@ export function SpotifySearch({ onSelectTrack, placeholder = "Search Spotify tra
         )}
         
         {!loading && tracks.length > 0 && query.trim() && (
-          <div className="search-results flex-1 flex flex-col gap-2">
+          <div className="search-results flex-1 overflow-y-auto flex flex-col gap-2 px-1">
             {tracks.slice(0, 5).map((track) => (
               <div
                 key={track.id}

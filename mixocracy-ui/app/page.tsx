@@ -227,7 +227,7 @@ export default function Home() {
       loadSongs(address);
       // Clear voted songs for admin view
       setVotedSongs(new Set());
-    } else if (activeDjs.length === 1 && activeTab === 'live') {
+    } else if (activeDjs.length === 1 && (activeTab === 'live' || (!isDj && !isOwner))) {
       // Auto-load songs when there's only one DJ live
       loadSongs(activeDjs[0]);
       interval = setInterval(() => loadSongs(activeDjs[0]), 5000);
@@ -241,7 +241,7 @@ export default function Home() {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDj, isDj, activeTab, address, contract.hasProvider, activeDjs.length]);
+  }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length]);
 
   async function handleVote(songId: number, djAddress?: string) {
     const targetDj = djAddress || selectedDj;
@@ -696,10 +696,28 @@ export default function Home() {
                     </div>
                     {/* Mobile: Full-width suggest button */}
                     <button
-                      className="btn btn-secondary btn-lg w-full md:hidden"
+                      className="btn btn-primary btn-lg w-full md:hidden"
                       onClick={() => {
                         setSelectedDj(activeDjs[0]);
                         setShowAddSongModal(true);
+                      }}
+                    >
+                      <PlusIcon className="w-5 h-5" />
+                      Suggest a Track
+                    </button>
+                  </div>
+                  
+                  {/* Desktop: Add suggest button between header and track list */}
+                  <div className="hidden md:flex justify-end mb-lg">
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        console.log('Desktop suggest button clicked');
+                        console.log('Current selectedDj:', selectedDj);
+                        console.log('Setting selectedDj to:', activeDjs[0]);
+                        setSelectedDj(activeDjs[0]);
+                        setShowAddSongModal(true);
+                        console.log('showAddSongModal set to true');
                       }}
                     >
                       <PlusIcon className="w-5 h-5" />
@@ -819,7 +837,7 @@ export default function Home() {
               )}
             </section>
           </div>
-        ) : activeTab === 'live' ? (
+        ) : activeTab === 'live' || (!isDj && !isOwner) ? (
           <div>
             {/* Active DJs */}
             <section>
@@ -847,7 +865,7 @@ export default function Home() {
                   {/* Mobile: Full-width suggest button */}
                   {isConnected && (
                     <button
-                      className="btn btn-secondary btn-lg w-full mb-md md:hidden"
+                      className="btn btn-primary btn-lg w-full mb-md md:hidden"
                       onClick={() => {
                         setSelectedDj(activeDjs[0]);
                         setShowAddSongModal(true);
@@ -863,14 +881,14 @@ export default function Home() {
                     {/* Desktop: Inline button */}
                     {isConnected && (
                       <button
-                        className="btn btn-secondary btn-sm hidden md:flex"
+                        className="btn btn-primary btn-sm hidden md:flex"
                         onClick={() => {
                           setSelectedDj(activeDjs[0]);
                           setShowAddSongModal(true);
                         }}
                       >
                         <PlusIcon className="w-4 h-4" />
-                        Suggest
+                        Suggest a Track
                       </button>
                     )}
                   </div>
@@ -994,7 +1012,7 @@ export default function Home() {
                         onClick={() => setShowAddSongModal(true)}
                       >
                         <PlusIcon className="w-5 h-5" />
-                        Add Track
+                        Suggest a Track
                       </button>
                     )}
                     <button
@@ -1388,85 +1406,114 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Desktop: Traditional modal */}
-          <div className="hidden md:flex modal-backdrop" onClick={() => setShowAddSongModal(false)}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <h3 className="modal-title">Add New Song</h3>
-                <button
-                  className="btn-icon"
-                  onClick={() => {
-                    setShowAddSongModal(false);
-                    setSelectedSpotifyTrack(null);
+          {/* Desktop: Large modal with mobile-like design */}
+          <div className="hidden md:flex fixed inset-0 z-50 items-center justify-center">
+            <div 
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setShowAddSongModal(false)}
+            />
+            
+            <div className="relative w-full max-w-2xl h-[600px] min-h-[600px] bg-background-primary rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                {/* Background gradient effect */}
+                <div 
+                  className="absolute inset-0 pointer-events-none rounded-2xl"
+                  style={{
+                    background: `
+                      radial-gradient(ellipse at 20% 80%, rgba(255, 38, 112, 0.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 80% 20%, rgba(7, 255, 255, 0.05) 0%, transparent 50%),
+                      radial-gradient(ellipse at 50% 50%, rgba(176, 38, 255, 0.03) 0%, transparent 50%)
+                    `
                   }}
-                >
-                  <XMarkIcon className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <div className="space-y-lg">
-                {selectedSpotifyTrack ? (
-                  <div className="bg-accent/10 border-2 border-accent rounded-lg p-lg">
-                    <div className="flex items-center gap-md">
-                      {selectedSpotifyTrack.album.images && selectedSpotifyTrack.album.images.length > 0 && (
-                        <Image 
-                          src={selectedSpotifyTrack.album.images[Math.min(1, selectedSpotifyTrack.album.images.length - 1)].url} 
-                          alt={selectedSpotifyTrack.album.name}
-                          width={64}
-                          height={64}
-                          className="rounded-md"
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-lg truncate">{selectedSpotifyTrack.name}</h3>
-                        <p className="text-secondary truncate">
-                          {selectedSpotifyTrack.artists.map(a => a.name).join(', ')}
-                        </p>
-                        <p className="text-xs text-accent mt-xs">Ready to add!</p>
+                />
+                
+                {/* Header */}
+                <div style={{ paddingLeft: '32px', paddingRight: '32px', paddingBottom: '24px', paddingTop: '24px', borderBottom: '1px solid rgba(255,255,255,0.1)', backgroundColor: 'rgba(30,30,30,0.8)' }}>
+                  <h3 className="text-lg font-semibold uppercase tracking-wider text-secondary text-center">
+                    {selectedSpotifyTrack ? 'READY TO ADD' : 'SEARCH SONGS'}
+                  </h3>
+                </div>
+                
+                {/* Content */}
+                <div className="relative flex-1 overflow-y-auto flex flex-col">
+                  {selectedSpotifyTrack ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8">
+                      <div className="w-full max-w-sm">
+                        <div className="mb-8">
+                          {selectedSpotifyTrack.album.images && selectedSpotifyTrack.album.images.length > 0 ? (
+                            <Image 
+                              src={selectedSpotifyTrack.album.images[0].url} 
+                              alt={selectedSpotifyTrack.album.name}
+                              width={200}
+                              height={200}
+                              className="rounded-xl shadow-lg mx-auto"
+                            />
+                          ) : (
+                            <div className="w-[200px] h-[200px] rounded-xl bg-surface-card/60 flex items-center justify-center mx-auto">
+                              <MusicalNoteIcon className="w-20 h-20 text-tertiary" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-center space-y-2 mb-8">
+                          <h3 className="font-bold text-2xl">{selectedSpotifyTrack.name}</h3>
+                          <p className="text-lg text-secondary">
+                            {selectedSpotifyTrack.artists.map(a => a.name).join(', ')}
+                          </p>
+                          <p className="text-sm text-tertiary">{selectedSpotifyTrack.album.name}</p>
+                        </div>
+                        <button
+                          className="btn btn-ghost btn-sm w-full"
+                          onClick={() => setSelectedSpotifyTrack(null)}
+                        >
+                          Change Selection
+                        </button>
                       </div>
+                    </div>
+                  ) : (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '32px', overflow: 'hidden' }}>
+                      <div className="flex-1 flex flex-col min-h-0">
+                        <SpotifySearch
+                          onSelectTrack={(track: SpotifyTrack) => {
+                            setSelectedSpotifyTrack(track);
+                          }}
+                          placeholder="Search artist or song..."
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Footer buttons */}
+                <div className="relative px-8 py-6 bg-background-secondary/50 border-t border-subtle">
+                  {selectedSpotifyTrack ? (
+                    <div className="flex gap-4">
                       <button
-                        className="btn btn-ghost btn-sm"
+                        className="btn btn-ghost flex-1"
                         onClick={() => setSelectedSpotifyTrack(null)}
                       >
-                        Change
+                        Back
+                      </button>
+                      <button
+                        className="btn btn-primary flex-1"
+                        onClick={handleAddSong}
+                        disabled={loading}
+                      >
+                        {loading ? 'Adding...' : 'Add Track'}
                       </button>
                     </div>
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-sm font-medium mb-md">
-                      Search for a song
-                    </label>
-                    <SpotifySearch
-                      onSelectTrack={(track: SpotifyTrack) => {
-                        setSelectedSpotifyTrack(track);
+                  ) : (
+                    <button
+                      className="btn btn-ghost w-full"
+                      onClick={() => {
+                        setShowAddSongModal(false);
+                        setSelectedSpotifyTrack(null);
                       }}
-                      placeholder="Type artist or song name..."
-                    />
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex gap-sm justify-end">
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    setShowAddSongModal(false);
-                    setSelectedSpotifyTrack(null);
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleAddSong}
-                  disabled={!selectedSpotifyTrack || loading}
-                >
-                  Add Song
-                </button>
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
         </>
       )}
 
