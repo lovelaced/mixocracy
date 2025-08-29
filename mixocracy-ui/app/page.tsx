@@ -42,6 +42,7 @@ export default function Home() {
   const [selectedSpotifyTrack, setSelectedSpotifyTrack] = useState<SpotifyTrack | null>(null);
   const [allDjs, setAllDjs] = useState<string[]>([]);
   const [roleChecked, setRoleChecked] = useState(false);
+  const [playedTracksSet, setPlayedTracksSet] = useState<Set<number>>(new Set());
 
   // Define callback functions first
   const loadActiveDjs = useCallback(async () => {
@@ -225,6 +226,10 @@ export default function Home() {
     } else if (isDj && activeTab === 'admin' && address) {
       // Load own songs when in BOOTH
       loadSongs(address);
+      // Refresh songs periodically if DJ is live
+      if (activeDjs.includes(address)) {
+        interval = setInterval(() => loadSongs(address), 5000);
+      }
       // Clear voted songs for admin view
       setVotedSongs(new Set());
     } else if (activeDjs.length === 1 && (activeTab === 'live' || (!isDj && !isOwner))) {
@@ -241,7 +246,7 @@ export default function Home() {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length]);
+  }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length, activeDjs]);
 
   async function handleVote(songId: number, djAddress?: string) {
     const targetDj = djAddress || selectedDj;
@@ -288,6 +293,7 @@ export default function Home() {
       const tx = await contract.stopSet(address);
       await tx.wait();
       toast.success('Set stopped!');
+      setPlayedTracksSet(new Set()); // Clear played tracks when stopping set
       loadActiveDjs();
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to stop set');
@@ -893,7 +899,7 @@ export default function Home() {
                     )}
                   </div>
                   
-                  {songs.length === 0 ? (
+                  {songs.filter(song => !playedTracksSet.has(song.id)).length === 0 ? (
                     <div className="card text-center p-xl">
                       <p className="text-secondary">No tracks in queue</p>
                       {isConnected && (
@@ -902,7 +908,9 @@ export default function Home() {
                     </div>
                   ) : (
                     <div className="space-y-sm">
-                      {songs.map((song, index) => {
+                      {songs
+                        .filter(song => !playedTracksSet.has(song.id))
+                        .map((song, index) => {
                         const hasVoted = votedSongs.has(song.id);
                         const isNext = index === 0;
                         
@@ -1129,6 +1137,7 @@ export default function Home() {
                   onSpotifyConnect={() => {
                     // Optional: Handle post-connection logic
                   }}
+                  onPlayedTracksChange={setPlayedTracksSet}
                 />
               </div>
             )}
@@ -1136,15 +1145,17 @@ export default function Home() {
             {/* My Tracks */}
             {isDj && (
               <section className="mb-xl">
-                <h3 className="text-lg font-semibold mb-md">My Tracks</h3>
-                {songs.length === 0 ? (
+                <h3 className="text-lg font-semibold mb-md">Manage Tracks</h3>
+                {songs.filter(song => !playedTracksSet.has(song.id)).length === 0 ? (
                   <div className="card text-center p-lg">
                     <p className="text-secondary">No tracks added yet</p>
                     <p className="text-sm text-tertiary mt-sm">Click &ldquo;Add Song&rdquo; to add your first track</p>
                   </div>
                 ) : (
                   <div className="space-y-sm">
-                    {songs.map((song, index) => (
+                    {songs
+                      .filter(song => !playedTracksSet.has(song.id))
+                      .map((song, index) => (
                       <div key={song.id} className="track-item">
                         <div className="flex items-center gap-md flex-1">
                           <span className="text-tertiary text-sm font-mono">#{index + 1}</span>

@@ -11,9 +11,10 @@ interface DjPlayerProps {
   songs: Song[];
   isLive: boolean;
   onSpotifyConnect?: () => void;
+  onPlayedTracksChange?: (playedTracks: Set<number>) => void;
 }
 
-export function DjPlayer({ songs, isLive, onSpotifyConnect }: DjPlayerProps) {
+export function DjPlayer({ songs, isLive, onSpotifyConnect, onPlayedTracksChange }: DjPlayerProps) {
   const {
     playerState,
     queue,
@@ -23,7 +24,10 @@ export function DjPlayer({ songs, isLive, onSpotifyConnect }: DjPlayerProps) {
     skipTrack,
     pause,
     resume,
-    transferPlayback
+    transferPlayback,
+    totalQueueSize,
+    playedCount,
+    playedTracksSet
   } = useSpotifyPlayer(songs, isLive);
 
   const handleConnectSpotify = () => {
@@ -32,6 +36,13 @@ export function DjPlayer({ songs, isLive, onSpotifyConnect }: DjPlayerProps) {
   };
 
   const hasSpotifyToken = SpotifyAuth.isAuthenticated();
+
+  // Notify parent when played tracks change
+  React.useEffect(() => {
+    if (onPlayedTracksChange) {
+      onPlayedTracksChange(playedTracksSet);
+    }
+  }, [playedTracksSet, onPlayedTracksChange]);
 
   if (!isLive) {
     return null;
@@ -74,7 +85,6 @@ export function DjPlayer({ songs, isLive, onSpotifyConnect }: DjPlayerProps) {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold">Spotify Player Initializing...</h3>
-            <p className="text-secondary text-sm">Make sure you have Spotify open</p>
           </div>
           <button
             className="btn btn-secondary btn-sm"
@@ -194,7 +204,7 @@ export function DjPlayer({ songs, isLive, onSpotifyConnect }: DjPlayerProps) {
           <div className="flex items-center gap-xs">
             <span className="w-1 h-1 rounded-full bg-accent animate-pulse" />
             <span className="text-xs font-mono text-white/50">
-              {queue.length}
+              {queue.length}{playedCount > 0 && ` (${playedCount} played)`}
             </span>
           </div>
         </div>
