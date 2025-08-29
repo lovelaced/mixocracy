@@ -477,30 +477,38 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
       if (currentIndex >= 0 && oldQueue[currentIndex] && playerState.isPlaying) {
         const currentTrack = oldQueue[currentIndex];
         
-        // Always include the current track at the front if it's playing
-        let reorderedQueue: QueuedTrack[] = [];
+        // Find the current track in the new queue
+        const currentTrackNewIndex = newQueue.findIndex(t => t.originalSongId === currentTrack.originalSongId);
         
-        // Just keep the current track from the old queue instead of re-searching
-        reorderedQueue.push(currentTrack);
-        
-        // Add the rest of the new queue
-        reorderedQueue = [...reorderedQueue, ...newQueue.filter(t => t.originalSongId !== currentTrack.originalSongId)];
-        
-        setQueue(reorderedQueue);
-        queueRef.current = reorderedQueue;
-        
-        // Keep index at 0 since current track is first
-        if (currentIndex !== 0) {
-          setCurrentTrackIndex(0);
-          currentTrackIndexRef.current = 0;
+        if (currentTrackNewIndex !== -1) {
+          // Current track exists in new queue, just use the new queue and update index
+          setQueue(newQueue);
+          queueRef.current = newQueue;
+          
+          if (currentIndex !== currentTrackNewIndex) {
+            setCurrentTrackIndex(currentTrackNewIndex);
+            currentTrackIndexRef.current = currentTrackNewIndex;
+            console.log('Queue updated, current track moved from index', currentIndex, 'to', currentTrackNewIndex);
+          }
+        } else {
+          // Current track was removed from queue, keep playing it but add to front
+          const reorderedQueue = [currentTrack, ...newQueue];
+          setQueue(reorderedQueue);
+          queueRef.current = reorderedQueue;
+          
+          if (currentIndex !== 0) {
+            setCurrentTrackIndex(0);
+            currentTrackIndexRef.current = 0;
+          }
+          console.log('Queue updated, current track preserved at index 0 (was removed from queue)');
         }
         
-        console.log('Queue updated, current track preserved at index 0');
-        
         // Check if the next track changed
-        if (oldQueue.length > currentIndex + 1 && reorderedQueue.length > 1) {
+        const updatedQueue = queueRef.current;
+        const updatedIndex = currentTrackIndexRef.current;
+        if (oldQueue.length > currentIndex + 1 && updatedQueue.length > updatedIndex + 1) {
           const oldNext = oldQueue[currentIndex + 1];
-          const newNext = reorderedQueue[1];
+          const newNext = updatedQueue[updatedIndex + 1];
           
           if (oldNext && (!newNext || oldNext.originalSongId !== newNext.originalSongId)) {
             if (newNext) {
@@ -595,11 +603,25 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
       return;
     }
 
+    // Clear any previously queued tracks since we're starting fresh
+    queuedTracksRef.current.clear();
+    
     setCurrentTrackIndex(0);
     currentTrackIndexRef.current = 0;
     await playTrack(queue[0].uri);
     toast.success(`Now playing: ${queue[0].name}`);
-  }, [queue, playTrack]);
+    
+    // Queue the second track immediately if available
+    if (queue.length > 1) {
+      setTimeout(async () => {
+        const added = await addToSpotifyQueue(queue[1].uri);
+        if (added) {
+          queuedTracksRef.current.add(queue[1].uri);
+          console.log(`Queued second track on start: ${queue[1].name}`);
+        }
+      }, 1000); // Small delay to ensure playback has started
+    }
+  }, [queue, playTrack, addToSpotifyQueue]);
 
   // Play next track in queue
   const playNext = useCallback(async () => {
@@ -642,8 +664,63 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
 
   // Skip to next track
   const skipTrack = useCallback(async () => {
-    // Always use our queue management since we're playing individual tracks
-    await playNext();
+    if (!accessTokenRef.current) return;
+    
+    const currentIndex = currentTrackIndexRef.current;
+    const currentQueue = queueRef.current;
+    
+    console.log('Skip requested:', {
+      currentIndex,
+      queueLength: currentQueue.length,
+      hasQueuedTracks: queuedTracksRef.current.size > 0,
+      queuedTracks: Array.from(queuedTracksRef.current)
+    });
+    
+    // Mark current track as played
+    if (currentIndex >= 0 && currentQueue[currentIndex]) {
+      const track = currentQueue[currentIndex];
+      const trackId = track.originalSongId;
+      playedTracksRef.current.add(trackId);
+      setPlayedTracks(prev => new Set([...prev, trackId]));
+    }
+    
+    // Check if we have a next track in our queue
+    if (currentIndex < currentQueue.length - 1) {
+      const nextTrack = currentQueue[currentIndex + 1];
+      
+      // If the next track isn't queued in Spotify yet, we need to play it manually
+      if (!queuedTracksRef.current.has(nextTrack.uri)) {
+        console.log('Next track not in Spotify queue, playing manually:', nextTrack.name);
+        await playNext();
+        return;
+      }
+    }
+    
+    try {
+      // Use Spotify's skip endpoint
+      console.log('Using Spotify skip endpoint');
+      const response = await fetch(
+        'https://api.spotify.com/v1/me/player/next',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessTokenRef.current}`
+          }
+        }
+      );
+      
+      if (!response.ok && response.status !== 204) {
+        // If skip fails, fall back to manual play
+        console.warn('Skip failed with status:', response.status);
+        await playNext();
+      } else {
+        console.log('Skip successful');
+      }
+    } catch (error) {
+      console.error('Error skipping track:', error);
+      // Fall back to manual play
+      await playNext();
+    }
   }, [playNext]);
 
   // Pause playback

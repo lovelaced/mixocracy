@@ -52,6 +52,7 @@ const SELECTOR_REMOVE_SONG: [u8; 4] = [0xd4, 0x34, 0x2c, 0xc7]; // removeSong(ui
 const SELECTOR_SUGGEST_SONG: [u8; 4] = [0x01, 0x72, 0x5a, 0xa1]; // suggestSong(address,string)
 const SELECTOR_GET_ALL_SONGS_WITH_VOTES: [u8; 4] = [0x47, 0xf8, 0xdc, 0x84]; // getAllSongsWithVotes(address)
 const SELECTOR_GET_DJ_INFO_EXTENDED: [u8; 4] = [0x6c, 0x44, 0xd3, 0x19]; // getDjInfoExtended(address)
+const SELECTOR_UNVOTE: [u8; 4] = [0x02, 0xaa, 0x9b, 0xe2]; // unvote(address,uint256)
 
 // Helper functions for storage keys
 fn get_dj_key(dj_address: &[u8; 20]) -> [u8; 32] {
@@ -359,6 +360,31 @@ fn vote(dj_address: [u8; 20], song_id: u32) {
     let votes_key = get_votes_key(&dj_address, song_id);
     let current_votes = get_u32(&votes_key);
     save_u32(&votes_key, current_votes + 1);
+}
+
+fn unvote(dj_address: [u8; 20], song_id: u32) {
+    let voter = get_origin();
+    
+    // Check if the DJ's set is currently active
+    assert!(is_set_active(dj_address), "SET_NOT_ACTIVE");
+    
+    // Check if song exists
+    let song_key = get_song_key(&dj_address, song_id);
+    assert!(get_string(&song_key).is_some(), "SONG_NOT_FOUND");
+    
+    // Check if the user has actually voted
+    let has_voted_key = get_has_voted_key(&voter, &dj_address, song_id);
+    assert!(get_bool(&has_voted_key), "NOT_VOTED");
+    
+    // Remove the vote record
+    save_bool(&has_voted_key, false);
+    
+    // Decrease the vote count
+    let votes_key = get_votes_key(&dj_address, song_id);
+    let current_votes = get_u32(&votes_key);
+    if current_votes > 0 {
+        save_u32(&votes_key, current_votes - 1);
+    }
 }
 
 fn get_votes(dj_address: [u8; 20], song_id: u32) -> u32 {
@@ -904,6 +930,21 @@ fn dispatch(selector: [u8; 4], data: &[u8]) {
                 Token::Uint(song_count.into()),
                 Token::String(String::from_utf8_lossy(&metadata).into_owned())
             ])]));
+        },
+        SELECTOR_UNVOTE => {
+            let decoded = decode(&[ParamType::Address, ParamType::Uint(256)], data)
+                .expect("Failed to decode params");
+            let mut dj_address = [0u8; 20];
+            if let Token::Address(addr) = &decoded[0] {
+                dj_address.copy_from_slice(&addr.0);
+            }
+            let song_id = if let Token::Uint(id) = &decoded[1] {
+                id.as_u32()
+            } else {
+                panic!("Invalid song ID");
+            };
+            unvote(dj_address, song_id);
+            api::return_value(ReturnFlags::empty(), &encode(&[Token::Bool(true)]));
         },
         _ => {
             // Unknown selector - handle as fallback

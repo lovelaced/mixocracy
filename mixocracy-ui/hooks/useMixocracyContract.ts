@@ -27,6 +27,7 @@ const SELECTORS = {
   getAllDjs: '0xa2f82c28', // getAllDjs()
   removeSong: '0xd4342cc7', // removeSong(uint256)
   suggestSong: '0x01725aa1', // suggestSong(address,string)
+  unvote: '0x02aa9be2', // unvote(address,uint256)
 };
 
 // Helper functions
@@ -202,6 +203,10 @@ export function useMixocracyContract() {
     return sendTransaction(SELECTORS.vote, ['address', 'uint256'], [djAddress, songId]);
   };
 
+  const unvote = async (djAddress: string, songId: number) => {
+    return sendTransaction(SELECTORS.unvote, ['address', 'uint256'], [djAddress, songId]);
+  };
+
   const getVotes = async (djAddress: string, songId: number): Promise<number> => {
     const result = await callContract(SELECTORS.getVotes, ['address', 'uint256'], [djAddress, songId]);
     return Number(decodeReturn(['uint256'], result)[0]);
@@ -269,6 +274,7 @@ export function useMixocracyContract() {
     suggestSong,
     // Voting
     vote,
+    unvote,
     getVotes,
     hasVoted,
     clearVotes,
