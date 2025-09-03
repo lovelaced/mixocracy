@@ -448,6 +448,18 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
 
   // Build queue from voted songs
   useEffect(() => {
+    // Check if Spotify is connected first
+    const token = SpotifyAuth.getStoredToken();
+    if (!token) {
+      // Clear queue if Spotify is not connected
+      if (queue.length > 0) {
+        setQueue([]);
+        queueRef.current = [];
+        console.log('Spotify not connected, cleared queue');
+      }
+      return;
+    }
+    
     if (!isDjLive || songs.length === 0 || isSearching || isTransitioningRef.current) return;
 
     const buildQueue = async () => {
@@ -466,7 +478,7 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
             originalSongId: song.id
           });
         } else {
-          console.warn(`Could not find Spotify track for: ${song.name}`);
+          console.warn(`Could not find Spotify track for: ${parseSongData(song.name).displayName}`);
         }
       }
 

@@ -287,15 +287,14 @@ export default function Home() {
           return newSet;
         });
         
-        // Update vote count and reorder
+        // Update vote count only (don't reorder yet)
         const currentSong = songs.find(s => s.id === songId);
         if (currentSong) {
           setSongs(prevSongs => {
-            const updatedSongs = prevSongs.map(song => 
+            // Only update the vote count, maintain current order
+            return prevSongs.map(song => 
               song.id === songId ? { ...song, votes: song.votes + 1 } : song
             );
-            // Sort by votes
-            return updatedSongs.sort((a, b) => b.votes - a.votes);
           });
         }
       });
@@ -354,15 +353,14 @@ export default function Home() {
           return newSet;
         });
         
-        // Update vote count and reorder
+        // Update vote count only (don't reorder yet)
         const currentSong = songs.find(s => s.id === songId);
         if (currentSong && currentSong.votes > 0) {
           setSongs(prevSongs => {
-            const updatedSongs = prevSongs.map(song => 
+            // Only update the vote count, maintain current order
+            return prevSongs.map(song => 
               song.id === songId ? { ...song, votes: Math.max(0, song.votes - 1) } : song
             );
-            // Sort by votes
-            return updatedSongs.sort((a, b) => b.votes - a.votes);
           });
         }
       });
@@ -1042,24 +1040,20 @@ export default function Home() {
                             return (
                               <motion.div
                                 key={`track-${song.id}`}
-                                layout
+                                layout="position"
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ 
                                   opacity: 1, 
-                                  y: 0,
-                                  transition: {
-                                    type: "spring",
-                                    stiffness: 200,
-                                    damping: 25,
-                                    mass: 0.8
-                                  }
+                                  y: 0
                                 }}
-                                exit={{ opacity: 0, x: -100 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
                                 transition={{
                                   layout: {
-                                    type: "spring",
-                                    stiffness: 200,
-                                    damping: 25
+                                    duration: 0.3,
+                                    ease: "easeInOut"
+                                  },
+                                  opacity: {
+                                    duration: 0.2
                                   }
                                 }}
                                 className={`track-item ${isNext ? 'active' : ''}`}
