@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useAccount } from 'wagmi';
 import { useMixocracyContract } from '@/hooks/useMixocracyContract';
 import { DjInfo, Song } from '@/hooks/useMixocracyContract';
@@ -20,6 +22,8 @@ import { truncateError, parseSongData } from '@/lib/utils';
 import { DjPlayer } from '@/components/DjPlayer';
 import { SpotifySearch } from '@/components/SpotifySearch';
 import { SpotifyTrack } from '@/hooks/useSpotifySearch';
+import { VoteButton } from '@/components/VoteButton';
+import MobileVoteHint from '@/components/MobileVoteHint';
 import Image from 'next/image';
 
 export default function Home() {
@@ -34,6 +38,7 @@ export default function Home() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [votedSongs, setVotedSongs] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [loadingSongs, setLoadingSongs] = useState<Set<number>>(new Set());
   const [isOwner, setIsOwner] = useState(false);
   const [isDj, setIsDj] = useState(false);
   const [showAddDjModal, setShowAddDjModal] = useState(false);
@@ -42,6 +47,8 @@ export default function Home() {
   const [selectedSpotifyTrack, setSelectedSpotifyTrack] = useState<SpotifyTrack | null>(null);
   const [allDjs, setAllDjs] = useState<string[]>([]);
   const [roleChecked, setRoleChecked] = useState(false);
+  const [playedTracksSet, setPlayedTracksSet] = useState<Set<number>>(new Set());
+  const [optimisticVotes, setOptimisticVotes] = useState<Map<number, number>>(new Map());
 
   // Define callback functions first
   const loadActiveDjs = useCallback(async () => {
@@ -137,7 +144,17 @@ export default function Home() {
         // Normal flow for active DJs
         try {
           const songList = await contract.getSongsWithVotes(djAddress);
-          const sortedSongs = songList.sort((a, b) => b.votes - a.votes);
+          
+          // Apply optimistic votes
+          const songsWithOptimisticVotes = songList.map(song => {
+            const optimisticVote = optimisticVotes.get(song.id);
+            return {
+              ...song,
+              votes: optimisticVote !== undefined ? optimisticVote : song.votes
+            };
+          });
+          
+          const sortedSongs = songsWithOptimisticVotes.sort((a, b) => b.votes - a.votes);
           setSongs(sortedSongs);
           
           // Check which songs the current user has voted for
@@ -147,12 +164,12 @@ export default function Home() {
               try {
                 const hasVoted = await contract.hasVoted(address, djAddress, song.id);
                 if (hasVoted) {
-                votedSet.add(song.id);
+                  votedSet.add(song.id);
+                }
+              } catch (error) {
+                console.error('Error checking vote status for song', song.id, ':', error);
               }
-            } catch (error) {
-              console.error('Error checking vote status:', error);
             }
-          }
           setVotedSongs(votedSet);
         }
         } catch (error) {
@@ -170,7 +187,7 @@ export default function Home() {
       console.error('Error loading songs:', error);
       setSongs([]);
     }
-  }, [address, activeTab, activeDjs, contract]);
+  }, [address, activeTab, activeDjs, contract, optimisticVotes]);
 
   // Load active DJs
   useEffect(() => {
@@ -225,6 +242,10 @@ export default function Home() {
     } else if (isDj && activeTab === 'admin' && address) {
       // Load own songs when in BOOTH
       loadSongs(address);
+      // Refresh songs periodically if DJ is live
+      if (activeDjs.includes(address)) {
+        interval = setInterval(() => loadSongs(address), 5000);
+      }
       // Clear voted songs for admin view
       setVotedSongs(new Set());
     } else if (activeDjs.length === 1 && (activeTab === 'live' || (!isDj && !isOwner))) {
@@ -235,32 +256,137 @@ export default function Home() {
       // Clear songs and voted state when no DJ is selected
       setSongs([]);
       setVotedSongs(new Set());
+      setOptimisticVotes(new Map());
     }
     
     return () => {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length]);
+  }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length, activeDjs]);
 
   async function handleVote(songId: number, djAddress?: string) {
     const targetDj = djAddress || selectedDj;
-    if (!targetDj || votedSongs.has(songId)) return;
+    if (!targetDj) return;
     
-    setLoading(true);
+    // Set loading for this specific song
+    setLoadingSongs(prev => new Set(prev).add(songId));
+    
     try {
       const tx = await contract.vote(targetDj, songId);
-      await tx.wait();
       
-      setVotedSongs(prev => new Set(prev).add(songId));
+      // Transaction submitted - update UI immediately
       toast.success('Vote submitted!');
       
-      // Reload songs
-      loadSongs(targetDj);
+      // Now update the UI with the new vote count and reorder
+      flushSync(() => {
+        // Mark as voted
+        setVotedSongs(prev => {
+          const newSet = new Set(prev);
+          newSet.add(songId);
+          return newSet;
+        });
+        
+        // Update vote count only (don't reorder yet)
+        const currentSong = songs.find(s => s.id === songId);
+        if (currentSong) {
+          setSongs(prevSongs => {
+            // Only update the vote count, maintain current order
+            return prevSongs.map(song => 
+              song.id === songId ? { ...song, votes: song.votes + 1 } : song
+            );
+          });
+        }
+      });
+      
+      // Wait for confirmation in background
+      tx.wait().then(() => {
+        // Reload to ensure we have the exact blockchain state
+        loadSongs(targetDj);
+      }).catch(error => {
+        console.error('Transaction failed:', error);
+        toast.error('Vote transaction failed');
+        // Reload to revert changes
+        loadSongs(targetDj);
+      });
     } catch (error) {
+      // Revert only the voted status on error
+      setVotedSongs(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(songId);
+        return newSet;
+      });
+      
       toast.error(truncateError(error) || 'Failed to vote');
     } finally {
-      setLoading(false);
+      // Remove loading state for this song
+      setLoadingSongs(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(songId);
+        return newSet;
+      });
+    }
+  }
+
+  async function handleUnvote(songId: number, djAddress?: string) {
+    const targetDj = djAddress || selectedDj;
+    if (!targetDj || !votedSongs.has(songId)) return;
+    
+    // Set loading for this specific song
+    setLoadingSongs(prev => new Set(prev).add(songId));
+    
+    try {
+      if (!contract.unvote) {
+        throw new Error('Unvote function not available');
+      }
+      const tx = await contract.unvote(targetDj, songId);
+      
+      // Transaction submitted - update UI immediately
+      toast.success('Vote removed');
+      
+      // Now update the UI with the new vote count and reorder
+      flushSync(() => {
+        // Remove vote mark
+        setVotedSongs(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(songId);
+          return newSet;
+        });
+        
+        // Update vote count only (don't reorder yet)
+        const currentSong = songs.find(s => s.id === songId);
+        if (currentSong && currentSong.votes > 0) {
+          setSongs(prevSongs => {
+            // Only update the vote count, maintain current order
+            return prevSongs.map(song => 
+              song.id === songId ? { ...song, votes: Math.max(0, song.votes - 1) } : song
+            );
+          });
+        }
+      });
+      
+      // Wait for confirmation in background
+      tx.wait().then(() => {
+        // Reload to ensure we have the exact blockchain state
+        loadSongs(targetDj);
+      }).catch(error => {
+        console.error('Transaction failed:', error);
+        toast.error('Unvote transaction failed');
+        // Reload to revert changes
+        loadSongs(targetDj);
+      });
+    } catch (error) {
+      // Revert only the voted status on error
+      setVotedSongs(prev => new Set(prev).add(songId));
+      
+      toast.error(truncateError(error) || 'Failed to remove vote');
+    } finally {
+      // Remove loading state for this song
+      setLoadingSongs(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(songId);
+        return newSet;
+      });
     }
   }
 
@@ -288,6 +414,7 @@ export default function Home() {
       const tx = await contract.stopSet(address);
       await tx.wait();
       toast.success('Set stopped!');
+      setPlayedTracksSet(new Set()); // Clear played tracks when stopping set
       loadActiveDjs();
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to stop set');
@@ -468,7 +595,7 @@ export default function Home() {
 
 
       {/* Main Content */}
-      <main className="container mb-xl">
+      <main className="container mb-xl pb-xl">
         {!isConnected ? (
           /* Landing Page for non-connected users */
           <div className="mt-lg">
@@ -893,7 +1020,7 @@ export default function Home() {
                     )}
                   </div>
                   
-                  {songs.length === 0 ? (
+                  {songs.filter(song => !playedTracksSet.has(song.id)).length === 0 ? (
                     <div className="card text-center p-xl">
                       <p className="text-secondary">No tracks in queue</p>
                       {isConnected && (
@@ -901,16 +1028,36 @@ export default function Home() {
                       )}
                     </div>
                   ) : (
-                    <div className="space-y-sm">
-                      {songs.map((song, index) => {
-                        const hasVoted = votedSongs.has(song.id);
-                        const isNext = index === 0;
-                        
-                        return (
-                          <div
-                            key={song.id}
-                            className={`track-item ${isNext ? 'active' : ''}`}
-                          >
+                    <LayoutGroup>
+                      <div className="track-list">
+                        <AnimatePresence mode="popLayout">
+                          {songs
+                            .filter(song => !playedTracksSet.has(song.id))
+                            .map((song, index) => {
+                            const hasVoted = votedSongs.has(song.id);
+                            const isNext = index === 0;
+                            
+                            return (
+                              <motion.div
+                                key={`track-${song.id}`}
+                                layout="position"
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ 
+                                  opacity: 1, 
+                                  y: 0
+                                }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                transition={{
+                                  layout: {
+                                    duration: 0.3,
+                                    ease: "easeInOut"
+                                  },
+                                  opacity: {
+                                    duration: 0.2
+                                  }
+                                }}
+                                className={`track-item ${isNext ? 'active' : ''}`}
+                              >
                             <div className="flex items-center justify-between w-full gap-md">
                               <div className="flex items-center gap-sm md:gap-md flex-1 min-w-0">
                                 <span className="text-tertiary text-xs md:text-sm font-mono">
@@ -925,26 +1072,41 @@ export default function Home() {
                               </div>
                               
                               <div className="flex items-center gap-xs md:gap-sm">
-                                <div className="vote-count text-center">
-                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
-                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
-                                </div>
-                                {isConnected && (
-                                  <button
-                                    className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                    onClick={() => handleVote(song.id, activeDjs[0])}
-                                    disabled={hasVoted || loading}
-                                  >
-                                    {hasVoted ? '✓' : '↑'}
-                                  </button>
+                                {isConnected ? (
+                                  <VoteButton
+                                    hasVoted={hasVoted}
+                                    isLoading={loadingSongs.has(song.id)}
+                                    onClick={() => {
+                                      // Explicit check to ensure proper handling in MetaMask
+                                      const isVoted = votedSongs.has(song.id);
+                                      if (isVoted) {
+                                        handleUnvote(song.id, activeDjs[0]);
+                                      } else {
+                                        handleVote(song.id, activeDjs[0]);
+                                      }
+                                    }}
+                                    votes={song.votes}
+                                  />
+                                ) : (
+                                  <div className="vote-count text-center">
+                                    <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                    <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                  </div>
                                 )}
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                              </motion.div>
+                            );
+                          })}
+                        </AnimatePresence>
+                      </div>
+                    </LayoutGroup>
                   )}
+                  
+                  {/* Mobile voting hint */}
+                  <MobileVoteHint 
+                    show={isConnected && songs.filter(song => !playedTracksSet.has(song.id)).length > 0 && votedSongs.size > 0}
+                  />
                 </>
               ) : (
                 // Multiple DJs or no DJs - show grid
@@ -1057,18 +1219,26 @@ export default function Home() {
                             </div>
                             
                             <div className="flex items-center gap-xs md:gap-sm">
-                              <div className="vote-count text-center">
-                                <div className="text-sm md:text-base font-semibold">{song.votes}</div>
-                                <div className="text-xs text-tertiary hidden md:block">votes</div>
-                              </div>
-                              {isConnected && (
-                                <button
-                                  className={`vote-button ${hasVoted ? 'voted' : ''}`}
-                                  onClick={() => handleVote(song.id)}
-                                  disabled={hasVoted || loading}
-                                >
-                                  {hasVoted ? '✓' : '↑'}
-                                </button>
+                              {isConnected ? (
+                                <VoteButton
+                                  hasVoted={hasVoted}
+                                  isLoading={loadingSongs.has(song.id)}
+                                  onClick={() => {
+                                    // Explicit check to ensure proper handling in MetaMask
+                                    const isVoted = votedSongs.has(song.id);
+                                    if (isVoted) {
+                                      handleUnvote(song.id);
+                                    } else {
+                                      handleVote(song.id);
+                                    }
+                                  }}
+                                  votes={song.votes}
+                                />
+                              ) : (
+                                <div className="vote-count text-center">
+                                  <div className="text-sm md:text-base font-semibold">{song.votes}</div>
+                                  <div className="text-xs text-tertiary hidden md:block">votes</div>
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1077,6 +1247,11 @@ export default function Home() {
                     })}
                   </div>
                 )}
+                
+                {/* Mobile voting hint */}
+                <MobileVoteHint 
+                  show={isConnected && songs.length > 0 && votedSongs.size > 0}
+                />
               </section>
             )}
           </div>
@@ -1129,6 +1304,7 @@ export default function Home() {
                   onSpotifyConnect={() => {
                     // Optional: Handle post-connection logic
                   }}
+                  onPlayedTracksChange={setPlayedTracksSet}
                 />
               </div>
             )}
@@ -1136,16 +1312,35 @@ export default function Home() {
             {/* My Tracks */}
             {isDj && (
               <section className="mb-xl">
-                <h3 className="text-lg font-semibold mb-md">My Tracks</h3>
-                {songs.length === 0 ? (
+                <h3 className="text-lg font-semibold mb-md">Manage Tracks</h3>
+                {songs.filter(song => !playedTracksSet.has(song.id)).length === 0 ? (
                   <div className="card text-center p-lg">
                     <p className="text-secondary">No tracks added yet</p>
                     <p className="text-sm text-tertiary mt-sm">Click &ldquo;Add Song&rdquo; to add your first track</p>
                   </div>
                 ) : (
-                  <div className="space-y-sm">
-                    {songs.map((song, index) => (
-                      <div key={song.id} className="track-item">
+                  <LayoutGroup id="manage-tracks">
+                    <div className="track-list">
+                      <AnimatePresence mode="popLayout">
+                        {songs
+                          .filter(song => !playedTracksSet.has(song.id))
+                          .map((song, index) => (
+                          <motion.div
+                            key={`manage-${song.id}`}
+                            layout
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ 
+                              opacity: 1, 
+                              scale: 1,
+                              transition: {
+                                type: "spring",
+                                stiffness: 200,
+                                damping: 25
+                              }
+                            }}
+                            exit={{ opacity: 0, scale: 0.9, x: -50 }}
+                            className="track-item"
+                          >
                         <div className="flex items-center gap-md flex-1">
                           <span className="text-tertiary text-sm font-mono">#{index + 1}</span>
                           <h4 className="font-medium">{parseSongData(song.name).displayName}</h4>
@@ -1160,9 +1355,11 @@ export default function Home() {
                             <XMarkIcon className="w-4 h-4" />
                           </button>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </LayoutGroup>
                 )}
               </section>
             )}

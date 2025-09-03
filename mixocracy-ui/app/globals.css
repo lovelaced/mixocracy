@@ -263,6 +263,13 @@ h6 { font-size: 0.875rem; }
   border: 1px solid var(--border-subtle);
 }
 
+/* Track List Container */
+.track-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
 /* Track List Item */
 .track-item {
   display: flex;
@@ -270,8 +277,8 @@ h6 { font-size: 0.875rem; }
   gap: var(--space-md);
   padding: var(--space-md);
   border-radius: var(--radius-md);
-  transition: all 0.2s ease;
-  cursor: pointer;
+  transition: background-color 0.2s ease,
+              box-shadow 0.2s ease;
   position: relative;
   overflow: hidden;
 }
@@ -370,6 +377,9 @@ h6 { font-size: 0.875rem; }
   justify-content: center;
   font-size: 1.25rem;
   font-weight: 400;
+  position: relative;
+  z-index: 10;
+  -webkit-tap-highlight-color: transparent;
 }
 
 @media (min-width: 768px) {
@@ -392,14 +402,48 @@ h6 { font-size: 0.875rem; }
   color: white;
   border-color: var(--accent-primary);
   box-shadow: 0 0 12px rgba(255, 38, 112, 0.4);
+  position: relative;
+  transition: all 0.2s ease;
+  cursor: pointer !important;
+  pointer-events: auto !important;
 }
 
 .vote-button.voted:hover {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
   color: white;
-  transform: none;
-  box-shadow: 0 0 16px rgba(255, 38, 112, 0.5);
+  transform: translateY(-2px) scale(1.1);
+  box-shadow: 0 0 24px rgba(255, 38, 112, 0.7);
+  cursor: pointer;
+}
+
+/* Pulsing effect when voted to draw attention */
+@media (max-width: 768px) {
+  .vote-button.voted {
+    animation: pulse-pink 2s ease-in-out infinite;
+  }
+  
+  /* Make it clear the voted button is still tappable on mobile */
+  .vote-button.voted:active {
+    transform: scale(0.9) !important;
+    background: var(--accent-press) !important;
+  }
+  
+  /* Ensure touch interactions work properly */
+  .vote-button {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  
+  @keyframes pulse-pink {
+    0%, 100% {
+      box-shadow: 0 0 12px rgba(255, 38, 112, 0.4);
+    }
+    50% {
+      box-shadow: 0 0 20px rgba(255, 38, 112, 0.8);
+    }
+  }
 }
 
 .vote-button:disabled {
