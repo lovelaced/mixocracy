@@ -1,11 +1,11 @@
 {
-  "address": "0x5F98737E92016b237A451db3258655B691904fBe",
-  "deploymentTx": "0x8a0cc0b1927093e569646230fd47b9439d1f828a43a6b43ed2535906bc333d6b",
+  "address": "0xfb45A9482d4885531cde08BdafA106B807f1BC5D",
+  "deploymentTx": "0x5e0bdbffb17883226e379a6d67e7573f7c79cd09430d55f184b35acf4d87fbb7",
   "deployer": "0x953701ef658cf531DAD9E23E5eF32dDA6D6A4467",
   "owner": "0x953701ef658cf531DAD9E23E5eF32dDA6D6A4467",
-  "timestamp": "2025-09-09T14:39:16.809Z",
+  "timestamp": "2025-09-09T19:53:39.649Z",
   "network": "paseo",
   "chainId": 420420422,
   "rpcUrl": "https://testnet-passet-hub-eth-rpc.polkadot.io",
-  "blockExplorer": "https://blockscout-passet-hub.parity-testnet.parity.io/address/0x5F98737E92016b237A451db3258655B691904fBe"
+  "blockExplorer": "https://blockscout-passet-hub.parity-testnet.parity.io/address/0xfb45A9482d4885531cde08BdafA106B807f1BC5D"
 }

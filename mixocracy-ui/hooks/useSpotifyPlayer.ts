@@ -3,6 +3,7 @@ import { SpotifyAuth } from '@/lib/spotify-auth';
 import { Song } from '@/hooks/useMixocracyContract';
 import { toast } from 'react-hot-toast';
 import { parseSongData } from '@/lib/utils';
+import { playedTracksService } from '@/lib/played-tracks-service';
 
 interface PlayerState {
   isReady: boolean;
@@ -21,7 +22,7 @@ interface QueuedTrack {
   originalSongId: number;
 }
 
-export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
+export function useSpotifyPlayer(songs: Song[], isDjLive: boolean, djAddress?: string) {
   const [player, setPlayer] = useState<Spotify.Player | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>({
     isReady: false,
@@ -211,17 +212,25 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
           const prevTrackInQueue = queueRef.current.find(t => t.uri === previousTrackUri);
           if (prevTrackInQueue) {
             const trackId = prevTrackInQueue.originalSongId;
-            playedTracksRef.current.add(trackId);
-            setPlayedTracks(prevSet => {
-              const newSet = new Set([...prevSet, trackId]);
-              console.log('Marked track as played (track change):', {
-                trackId,
-                trackName: prevTrackInQueue.name,
-                totalPlayed: newSet.size,
-                playedIds: Array.from(newSet)
+            // Only mark as played if not already marked
+            if (!playedTracksRef.current.has(trackId)) {
+              playedTracksRef.current.add(trackId);
+              setPlayedTracks(prevSet => {
+                const newSet = new Set([...prevSet, trackId]);
+                console.log('Marked track as played (track change):', {
+                  trackId,
+                  trackName: prevTrackInQueue.name,
+                  totalPlayed: newSet.size,
+                  playedIds: Array.from(newSet)
+                });
+                return newSet;
               });
-              return newSet;
-            });
+              
+              // Queue for removal from blockchain
+              if (djAddress) {
+                playedTracksService.queueForRemoval(trackId, djAddress);
+              }
+            }
           }
           
           // Find the new track in our queue and update the current index
@@ -249,9 +258,17 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
             const currentIdx = currentTrackIndexRef.current;
             if (currentIdx >= 0 && queueRef.current[currentIdx]) {
               const currentTrack = queueRef.current[currentIdx];
-              playedTracksRef.current.add(currentTrack.originalSongId);
-              setPlayedTracks(prev => new Set([...prev, currentTrack.originalSongId]));
-              console.log('Marked current track as played:', currentTrack.name);
+              // Only mark as played if not already marked
+              if (!playedTracksRef.current.has(currentTrack.originalSongId)) {
+                playedTracksRef.current.add(currentTrack.originalSongId);
+                setPlayedTracks(prev => new Set([...prev, currentTrack.originalSongId]));
+                console.log('Marked current track as played (track end):', currentTrack.name);
+                
+                // Queue for removal from blockchain
+                if (djAddress) {
+                  playedTracksService.queueForRemoval(currentTrack.originalSongId, djAddress);
+                }
+              }
             }
             
             // Find and play the highest voted unplayed track
@@ -703,6 +720,11 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
         });
         return newSet;
       });
+      
+      // Queue for removal from blockchain
+      if (djAddress) {
+        playedTracksService.queueForRemoval(trackId, djAddress);
+      }
     }
 
     // Find the highest voted track that hasn't been played yet
@@ -750,6 +772,11 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
       const trackId = track.originalSongId;
       playedTracksRef.current.add(trackId);
       setPlayedTracks(prev => new Set([...prev, trackId]));
+      
+      // Queue for removal from blockchain
+      if (djAddress) {
+        playedTracksService.queueForRemoval(trackId, djAddress);
+      }
     }
     
     // Check if we have a next track in our queue

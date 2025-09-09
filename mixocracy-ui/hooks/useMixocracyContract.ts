@@ -19,8 +19,7 @@ const SELECTORS = {
   stopSet: '0x6b41c169', // stopSet(address)
   isSetActive: '0x2e81782f', // isSetActive(address)
   getActiveDjs: '0x9a709fa4', // getActiveDjs()
-  getSongsWithVotes: '0x0d357d3d', // getSongsWithVotes(address)
-  getTopSongs: '0xe7b96e73', // getTopSongs(address,uint256)
+  getAllSongsWithVotes: '0x47f8dc84', // getAllSongsWithVotes(address) - returns only non-removed songs
   setDjMetadata: '0xb4a31427', // setDjMetadata(address,string)
   getDjMetadata: '0x197e053e', // getDjMetadata(address)
   getDjInfo: '0xe9230c05', // getDjInfo(address)
@@ -28,6 +27,8 @@ const SELECTORS = {
   removeSong: '0xd4342cc7', // removeSong(uint256)
   suggestSong: '0x01725aa1', // suggestSong(address,string)
   unvote: '0x02aa9be2', // unvote(address,uint256)
+  removeSongUniversal: '0x42ed653b', // removeSongUniversal(address,uint256)
+  isSongRemoved: '0x59d23866', // isSongRemoved(address,uint256)
 };
 
 // Helper functions
@@ -184,18 +185,8 @@ export function useMixocracyContract() {
     return decodeReturn(['uint256'], result)[0];
   };
 
-  const getSongsWithVotes = async (djAddress: string): Promise<Song[]> => {
-    const result = await callContract(SELECTORS.getSongsWithVotes, ['address'], [djAddress]);
-    const decoded = decodeReturn(['(uint256,string,uint256)[]'], result)[0];
-    return decoded.map((item: any) => ({
-      id: Number(item[0]),
-      name: item[1],
-      votes: Number(item[2])
-    }));
-  };
-
-  const getTopSongs = async (djAddress: string, limit: number): Promise<Song[]> => {
-    const result = await callContract(SELECTORS.getTopSongs, ['address', 'uint256'], [djAddress, limit]);
+  const getAllSongsWithVotes = async (djAddress: string): Promise<Song[]> => {
+    const result = await callContract(SELECTORS.getAllSongsWithVotes, ['address'], [djAddress]);
     const decoded = decodeReturn(['(uint256,string,uint256)[]'], result)[0];
     return decoded.map((item: any) => ({
       id: Number(item[0]),
@@ -257,6 +248,16 @@ export function useMixocracyContract() {
     };
   };
 
+  const isSongRemoved = async (djAddress: string, songId: number): Promise<boolean> => {
+    try {
+      const result = await callContract(SELECTORS.isSongRemoved, ['address', 'uint256'], [djAddress, songId]);
+      return decodeReturn(['bool'], result)[0];
+    } catch {
+      // If the method doesn't exist or fails, assume song is not removed
+      return false;
+    }
+  };
+
   return {
     hasProvider: !!readOnlyProvider || !!provider,
     hasWallet: !!provider,
@@ -274,8 +275,7 @@ export function useMixocracyContract() {
     addSong,
     getSong,
     getSongCount,
-    getSongsWithVotes,
-    getTopSongs,
+    getAllSongsWithVotes,
     removeSong,
     suggestSong,
     // Voting
@@ -288,5 +288,6 @@ export function useMixocracyContract() {
     setDjMetadata,
     getDjMetadata,
     getDjInfo,
+    isSongRemoved,
   };
 }

@@ -48,6 +48,7 @@ export default function Home() {
   const [allDjs, setAllDjs] = useState<string[]>([]);
   const [roleChecked, setRoleChecked] = useState(false);
   const [playedTracksSet, setPlayedTracksSet] = useState<Set<number>>(new Set());
+  const [removedSongs, setRemovedSongs] = useState<Set<number>>(new Set());
   const [optimisticVotes, setOptimisticVotes] = useState<Map<number, number>>(new Map());
 
   // Define callback functions first
@@ -115,111 +116,78 @@ export default function Home() {
   }, [address, contract]);
 
   const loadSongs = useCallback(async (djAddress: string) => {
-    if (!contract.getSongCount || !contract.getSong || !contract.getVotes || !contract.getSongsWithVotes || !contract.hasVoted) return;
+    if (!contract.getSongCount || !contract.getSong || !contract.getVotes || !contract.getAllSongsWithVotes || !contract.hasVoted || !contract.isSongRemoved) return;
     
     try {
-      // If loading for self in BOOTH and not live, load songs differently
-      if (djAddress === address && activeTab === 'admin' && !activeDjs.includes(djAddress)) {
-        // Load songs without votes (since we're not active)
+      // getAllSongsWithVotes works for both active and inactive DJs
+      let songList: Song[];
+      try {
+        songList = await contract.getAllSongsWithVotes(djAddress);
+      } catch {
+        // Silently fall back to manual loading when getAllSongsWithVotes fails
+        // This can happen when the contract's voting data is in an inconsistent state
+        
+        // Fallback to manual loading
         const songCount = await contract.getSongCount(djAddress);
-        const songList: Song[] = [];
+        songList = [];
         
         for (let i = 0; i < songCount; i++) {
+          // Check if song is removed
+          const isRemoved = await contract.isSongRemoved(djAddress, i);
+          if (isRemoved) {
+            console.log(`Song ${i} is marked as removed, skipping`);
+            continue;
+          }
+          
           const name = await contract.getSong(djAddress, i);
-          // Skip if song name is empty (might be removed)
           if (!name || name.trim() === '') {
             continue;
           }
-          // Try to get votes, default to 0 if it fails
           let votes = 0;
           try {
             votes = await contract.getVotes(djAddress, i);
           } catch {
-            // Ignore vote errors when not active
+            // Default to 0 votes if can't get them
           }
           songList.push({ id: i, name, votes });
         }
-        
-        setSongs(songList);
-      } else {
-        // Normal flow for active DJs
-        try {
-          // Check if DJ is actually active before using getSongsWithVotes
-          if (!activeDjs.includes(djAddress)) {
-            console.error('Attempting to load songs for inactive DJ:', djAddress);
-            setSongs([]);
-            return;
-          }
-          
-          let songList: Song[];
+      }
+      
+      // Apply optimistic votes
+      const songsWithOptimisticVotes = songList.map(song => {
+        const optimisticVote = optimisticVotes.get(song.id);
+        return {
+          ...song,
+          votes: optimisticVote !== undefined ? optimisticVote : song.votes
+        };
+      });
+      
+      // Sort by votes and filter out removed songs
+      const sortedSongs = songsWithOptimisticVotes
+        .filter(song => !removedSongs.has(song.id))
+        .sort((a, b) => b.votes - a.votes);
+      setSongs(sortedSongs);
+      
+      // Check which songs the current user has voted for
+      if (address) {
+        const votedSet = new Set<number>();
+        for (const song of sortedSongs) {
           try {
-            songList = await contract.getSongsWithVotes(djAddress);
-          } catch (getSongsError) {
-            // Silently fall back to manual loading when getSongsWithVotes fails
-            // This can happen when the contract's voting data is in an inconsistent state
-            
-            // Fallback to manual loading
-            const songCount = await contract.getSongCount(djAddress);
-            songList = [];
-            
-            for (let i = 0; i < songCount; i++) {
-              const name = await contract.getSong(djAddress, i);
-              if (!name || name.trim() === '') {
-                continue;
-              }
-              let votes = 0;
-              try {
-                votes = await contract.getVotes(djAddress, i);
-              } catch {
-                // Default to 0 votes if can't get them
-              }
-              songList.push({ id: i, name, votes });
+            const hasVoted = await contract.hasVoted(address, djAddress, song.id);
+            if (hasVoted) {
+              votedSet.add(song.id);
             }
+          } catch (error) {
+            console.error('Error checking vote status for song', song.id, ':', error);
           }
-          
-          // Apply optimistic votes
-          const songsWithOptimisticVotes = songList.map(song => {
-            const optimisticVote = optimisticVotes.get(song.id);
-            return {
-              ...song,
-              votes: optimisticVote !== undefined ? optimisticVote : song.votes
-            };
-          });
-          
-          const sortedSongs = songsWithOptimisticVotes.sort((a, b) => b.votes - a.votes);
-          setSongs(sortedSongs);
-          
-          // Check which songs the current user has voted for
-          if (address) {
-            const votedSet = new Set<number>();
-            for (const song of sortedSongs) {
-              try {
-                const hasVoted = await contract.hasVoted(address, djAddress, song.id);
-                if (hasVoted) {
-                  votedSet.add(song.id);
-                }
-              } catch (error) {
-                console.error('Error checking vote status for song', song.id, ':', error);
-              }
-            }
-          setVotedSongs(votedSet);
         }
-        } catch (error) {
-          console.error('Error loading songs for active DJ:', error);
-          // Check if it's the SET_NOT_ACTIVE error
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          if (errorMessage.includes('SET_NOT_ACTIVE')) {
-            console.error('DJ set not active, but should be:', djAddress, 'Active DJs:', activeDjs);
-          }
-          toast.error('Failed to load track queue');
-          setSongs([]);
-        }
+        setVotedSongs(votedSet);
       }
     } catch (error) {
       console.error('Error loading songs:', error);
       setSongs([]);
     }
-  }, [address, activeTab, activeDjs, contract, optimisticVotes]);
+  }, [address, activeTab, activeDjs, contract, optimisticVotes, removedSongs]);
 
   // Load active DJs
   useEffect(() => {
@@ -291,8 +259,35 @@ export default function Home() {
       setOptimisticVotes(new Map());
     }
     
+    // Listen for song removal events to refresh the list
+    const handleSongRemoved = (event: CustomEvent) => {
+      const { songId, djAddress: affectedDj, transactionHash } = event.detail;
+      console.log(`🎵 Song ${songId} removed from blockchain`, {
+        djAddress: affectedDj,
+        transactionHash,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Add to removed songs set immediately for client-side filtering
+      setRemovedSongs(prev => new Set(prev).add(songId));
+      
+      // Refresh songs for the affected DJ
+      if (selectedDj === affectedDj || 
+          (activeDjs.length === 1 && activeDjs[0] === affectedDj) ||
+          (isDj && address === affectedDj)) {
+        // Add a delay to ensure the blockchain state is fully updated
+        setTimeout(() => {
+          console.log(`🔄 Refreshing song list after removal for DJ ${affectedDj}`);
+          loadSongs(affectedDj);
+        }, 2000);
+      }
+    };
+    
+    window.addEventListener('songRemoved', handleSongRemoved as EventListener);
+    
     return () => {
       if (interval) clearInterval(interval);
+      window.removeEventListener('songRemoved', handleSongRemoved as EventListener);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDj, isDj, isOwner, activeTab, address, contract.hasProvider, activeDjs.length, activeDjs]);
@@ -1341,6 +1336,7 @@ export default function Home() {
                 <DjPlayer 
                   songs={songs} 
                   isLive={activeDjs.includes(address!)}
+                  djAddress={address}
                   onSpotifyConnect={() => {
                     // Optional: Handle post-connection logic
                   }}

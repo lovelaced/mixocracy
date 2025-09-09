@@ -10,11 +10,12 @@ import { SpotifyAuth } from '@/lib/spotify-auth';
 interface DjPlayerProps {
   songs: Song[];
   isLive: boolean;
+  djAddress?: string;
   onSpotifyConnect?: () => void;
   onPlayedTracksChange?: (playedTracks: Set<number>) => void;
 }
 
-export function DjPlayer({ songs, isLive, onSpotifyConnect, onPlayedTracksChange }: DjPlayerProps) {
+export function DjPlayer({ songs, isLive, djAddress, onSpotifyConnect, onPlayedTracksChange }: DjPlayerProps) {
   const {
     playerState,
     queue,
@@ -27,7 +28,7 @@ export function DjPlayer({ songs, isLive, onSpotifyConnect, onPlayedTracksChange
     transferPlayback,
     playedCount,
     playedTracksSet
-  } = useSpotifyPlayer(songs, isLive);
+  } = useSpotifyPlayer(songs, isLive, djAddress);
 
   const handleConnectSpotify = () => {
     SpotifyAuth.authenticate();
