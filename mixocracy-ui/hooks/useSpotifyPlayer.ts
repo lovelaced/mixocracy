@@ -46,6 +46,7 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
   const playedTracksRef = useRef<Set<number>>(new Set());
   const queuedTracksRef = useRef<Set<string>>(new Set());
   const trackCacheRef = useRef<Map<string, { uri: string; name: string; artist: string }>>(new Map());
+  const isHandlingTrackEndRef = useRef(false);
 
   // Reset played tracks when DJ stops
   useEffect(() => {
@@ -234,15 +235,64 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
         
         previousTrackUri = currentTrackUri;
         
-        // Better track end detection: track ended if it was playing, now paused, and position is 0
-        // OR if position is very close to duration (within 1 second)
-        const trackEnded = wasPlaying && !isNowPlaying && (
-          state.position === 0 || 
-          (state.duration > 0 && state.position >= state.duration - 1000)
-        );
-
-        // Don't manually handle track end - let Spotify Queue API handle it
-        // The track change detection above will handle updating our state when Spotify moves to the next track
+        // Handle track end - when track naturally finishes playing
+        // Check that we were near the end of the track before it stopped
+        const nearEnd = prev.duration > 0 && prev.position > prev.duration - 2000;
+        if (wasPlaying && !isNowPlaying && nearEnd && !state.track_window.next_tracks.length && !isHandlingTrackEndRef.current) {
+          // Track ended naturally and no next track in Spotify queue
+          console.log('Track ended naturally, need to play next');
+          isHandlingTrackEndRef.current = true;
+          
+          // Use a timeout to avoid race conditions
+          setTimeout(() => {
+            // First mark the current track as played
+            const currentIdx = currentTrackIndexRef.current;
+            if (currentIdx >= 0 && queueRef.current[currentIdx]) {
+              const currentTrack = queueRef.current[currentIdx];
+              playedTracksRef.current.add(currentTrack.originalSongId);
+              setPlayedTracks(prev => new Set([...prev, currentTrack.originalSongId]));
+              console.log('Marked current track as played:', currentTrack.name);
+            }
+            
+            // Find and play the highest voted unplayed track
+            const currentQueue = queueRef.current;
+            for (let i = 0; i < currentQueue.length; i++) {
+              const track = currentQueue[i];
+              if (!playedTracksRef.current.has(track.originalSongId)) {
+                console.log('Auto-playing next track:', track.name);
+                setCurrentTrackIndex(i);
+                currentTrackIndexRef.current = i;
+                
+                // Use Spotify Web API directly to avoid circular dependencies
+                fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceIdRef.current}`, {
+                  method: 'PUT',
+                  body: JSON.stringify({
+                    uris: [track.uri],
+                    position_ms: 0
+                  }),
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${accessTokenRef.current}`
+                  }
+                }).then(() => {
+                  toast.success(`Now playing: ${track.name}`, { icon: '🎵' });
+                  // Reset the flag after a delay
+                  setTimeout(() => {
+                    isHandlingTrackEndRef.current = false;
+                  }, 3000);
+                }).catch(err => {
+                  console.error('Failed to auto-play next track:', err);
+                  isHandlingTrackEndRef.current = false;
+                });
+                break;
+              }
+            }
+            // Reset flag if no tracks to play
+            if (!currentQueue.find(t => !playedTracksRef.current.has(t.originalSongId))) {
+              isHandlingTrackEndRef.current = false;
+            }
+          }, 1000);
+        }
 
         return {
           ...prev,
@@ -285,26 +335,8 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
               position: state.position
             }));
             
-            // Check if we're near the end of the track (5 seconds remaining)
-            const timeRemaining = state.duration - state.position;
-            if (timeRemaining <= 5000 && timeRemaining > 4900) { // Only trigger once
-              const currentIndex = currentTrackIndexRef.current;
-              const currentQueue = queueRef.current;
-              
-              if (currentIndex >= 0 && currentIndex < currentQueue.length - 1) {
-                const nextTrack = currentQueue[currentIndex + 1];
-                
-                // Check if we haven't already queued this track
-                if (!queuedTracksRef.current.has(nextTrack.uri)) {
-                  const added = await addToSpotifyQueue(nextTrack.uri);
-                  if (added) {
-                    queuedTracksRef.current.add(nextTrack.uri);
-                    console.log(`Queued next track (5s before end): ${nextTrack.name}`);
-                    toast(`Next: ${nextTrack.name}`, { icon: '⏭️', duration: 2000 });
-                  }
-                }
-              }
-            }
+            // Don't queue anything automatically - we'll handle it when track ends
+            // This prevents us from queuing the wrong track if votes change
           }
         }
       } catch (error) {
@@ -463,7 +495,10 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
     if (!isDjLive || songs.length === 0 || isSearching || isTransitioningRef.current) return;
 
     const buildQueue = async () => {
-      setIsSearching(true);
+      // Only show searching state if we don't have a queue yet
+      if (queue.length === 0) {
+        setIsSearching(true);
+      }
       const newQueue: QueuedTrack[] = [];
 
       // Sort songs by votes (highest first)
@@ -618,22 +653,32 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
     // Clear any previously queued tracks since we're starting fresh
     queuedTracksRef.current.clear();
     
-    setCurrentTrackIndex(0);
-    currentTrackIndexRef.current = 0;
-    await playTrack(queue[0].uri);
-    toast.success(`Now playing: ${queue[0].name}`);
+    // Find the first unplayed track (should be the highest voted)
+    let firstTrack = null;
+    let firstIndex = -1;
     
-    // Queue the second track immediately if available
-    if (queue.length > 1) {
-      setTimeout(async () => {
-        const added = await addToSpotifyQueue(queue[1].uri);
-        if (added) {
-          queuedTracksRef.current.add(queue[1].uri);
-          console.log(`Queued second track on start: ${queue[1].name}`);
-        }
-      }, 1000); // Small delay to ensure playback has started
+    for (let i = 0; i < queue.length; i++) {
+      const track = queue[i];
+      if (!playedTracksRef.current.has(track.originalSongId)) {
+        firstTrack = track;
+        firstIndex = i;
+        break;
+      }
     }
-  }, [queue, playTrack, addToSpotifyQueue]);
+    
+    if (!firstTrack) {
+      // All tracks have been played, start from the beginning
+      firstTrack = queue[0];
+      firstIndex = 0;
+    }
+    
+    setCurrentTrackIndex(firstIndex);
+    currentTrackIndexRef.current = firstIndex;
+    await playTrack(firstTrack.uri);
+    toast.success(`Now playing: ${firstTrack.name}`);
+    
+    // Don't queue anything automatically - let votes determine what plays next
+  }, [queue, playTrack]);
 
   // Play next track in queue
   const playNext = useCallback(async () => {
@@ -660,16 +705,27 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
       });
     }
 
-    const nextIndex = currentIndex + 1;
-    if (nextIndex >= currentQueue.length) {
+    // Find the highest voted track that hasn't been played yet
+    let nextTrack = null;
+    let nextIndex = -1;
+    
+    for (let i = 0; i < currentQueue.length; i++) {
+      const track = currentQueue[i];
+      if (!playedTracksRef.current.has(track.originalSongId)) {
+        nextTrack = track;
+        nextIndex = i;
+        break; // Queue is already sorted by votes, so first unplayed is highest voted
+      }
+    }
+    
+    if (!nextTrack || nextIndex === -1) {
       toast('Reached end of queue', { icon: 'ℹ️' });
       return;
     }
 
-    console.log('Playing next track:', nextIndex, currentQueue[nextIndex]);
+    console.log('Playing highest voted unplayed track:', nextIndex, nextTrack);
     setCurrentTrackIndex(nextIndex);
     currentTrackIndexRef.current = nextIndex;
-    const nextTrack = currentQueue[nextIndex];
     await playTrack(nextTrack.uri);
     toast.success(`Now playing: ${nextTrack.name}`);
   }, [playTrack]);
@@ -788,6 +844,7 @@ export function useSpotifyPlayer(songs: Song[], isDjLive: boolean) {
   const visibleCurrentTrackIndex = visibleQueue.findIndex(
     track => currentTrackIndex >= 0 && queue[currentTrackIndex]?.originalSongId === track.originalSongId
   );
+
 
   return {
     player,
