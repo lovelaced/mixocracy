@@ -1,6 +1,5 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
@@ -12,22 +11,9 @@ interface VoteButtonProps {
 }
 
 export function VoteButton({ hasVoted, isLoading, onClick, votes }: VoteButtonProps) {
-  const [showUnvoteHint, setShowUnvoteHint] = useState(false);
-  const [showMobileHint, setShowMobileHint] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout>();
-  const touchHandledRef = useRef(false);
-
-  useEffect(() => {
-    // Show hint on any device that supports touch
-    const hasTouch = window.matchMedia('(pointer: coarse)').matches || 
-                     'ontouchstart' in window || 
-                     navigator.maxTouchPoints > 0;
-    setShowMobileHint(hasTouch);
-  }, []);
-
   // Simplified approach - always allow clicking when voted
   // The desktop X button will handle unvoting on desktop
-  const handleVoteClick = (e?: any) => {
+  const handleVoteClick = (e?: React.MouseEvent<HTMLButtonElement>) => {
     e?.preventDefault();
     e?.stopPropagation();
     
@@ -38,12 +24,6 @@ export function VoteButton({ hasVoted, isLoading, onClick, votes }: VoteButtonPr
       }
       onClick();
     }
-  };
-  
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    handleVoteClick();
   };
 
   return (

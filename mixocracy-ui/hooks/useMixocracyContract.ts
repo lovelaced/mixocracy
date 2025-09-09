@@ -61,7 +61,13 @@ export function useMixocracyContract() {
   useEffect(() => {
     // Set up read-only provider only once
     if (!readOnlyProvider) {
-      const jsonProvider = new ethers.JsonRpcProvider('https://westend-asset-hub-eth-rpc.polkadot.io');
+      // Get RPC URL based on network
+      const network = process.env.NEXT_PUBLIC_NETWORK || 'paseo'; // Default to paseo
+      const rpcUrl = network === 'westend'
+        ? 'https://westend-asset-hub-eth-rpc.polkadot.io'
+        : 'https://testnet-passet-hub-eth-rpc.polkadot.io'; // Paseo is default
+      
+      const jsonProvider = new ethers.JsonRpcProvider(rpcUrl);
       setReadOnlyProvider(jsonProvider);
     }
   }, [readOnlyProvider]);

@@ -5,6 +5,7 @@
   "main": "deploy_mixocracy.ts",
   "scripts": {
     "deploy": "ts-node deploy_mixocracy.ts",
+    "deploy:paseo": "ts-node deploy_mixocracy_paseo.ts",
     "build-contract": "./build.sh"
   },
   "dependencies": {
