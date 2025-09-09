@@ -42,17 +42,17 @@ const SELECTOR_START_SET: [u8; 4] = [0xb4, 0xd6, 0xb5, 0x62]; // startSet(addres
 const SELECTOR_STOP_SET: [u8; 4] = [0x6b, 0x41, 0xc1, 0x69]; // stopSet(address)
 const SELECTOR_IS_SET_ACTIVE: [u8; 4] = [0x2e, 0x81, 0x78, 0x2f]; // isSetActive(address)
 const SELECTOR_GET_ACTIVE_DJS: [u8; 4] = [0x9a, 0x70, 0x9f, 0xa4]; // getActiveDjs()
-const SELECTOR_GET_SONGS_WITH_VOTES: [u8; 4] = [0x0d, 0x35, 0x7d, 0x3d]; // getSongsWithVotes(address)
 const SELECTOR_SET_DJ_METADATA: [u8; 4] = [0xb4, 0xa3, 0x14, 0x27]; // setDjMetadata(address,string)
 const SELECTOR_GET_DJ_METADATA: [u8; 4] = [0x19, 0x7e, 0x05, 0x3e]; // getDjMetadata(address)
 const SELECTOR_GET_DJ_INFO: [u8; 4] = [0xe9, 0x23, 0x0c, 0x05]; // getDjInfo(address)
-const SELECTOR_GET_TOP_SONGS: [u8; 4] = [0xe7, 0xb9, 0x6e, 0x73]; // getTopSongs(address,uint256)
 const SELECTOR_GET_ALL_DJS: [u8; 4] = [0xa2, 0xf8, 0x2c, 0x28]; // getAllDjs()
 const SELECTOR_REMOVE_SONG: [u8; 4] = [0xd4, 0x34, 0x2c, 0xc7]; // removeSong(uint256)
 const SELECTOR_SUGGEST_SONG: [u8; 4] = [0x01, 0x72, 0x5a, 0xa1]; // suggestSong(address,string)
+const SELECTOR_REMOVE_SONG_UNIVERSAL: [u8; 4] = [0x42, 0xed, 0x65, 0x3b]; // removeSongUniversal(address,uint256)
 const SELECTOR_GET_ALL_SONGS_WITH_VOTES: [u8; 4] = [0x47, 0xf8, 0xdc, 0x84]; // getAllSongsWithVotes(address)
 const SELECTOR_GET_DJ_INFO_EXTENDED: [u8; 4] = [0x6c, 0x44, 0xd3, 0x19]; // getDjInfoExtended(address)
 const SELECTOR_UNVOTE: [u8; 4] = [0x02, 0xaa, 0x9b, 0xe2]; // unvote(address,uint256)
+const SELECTOR_IS_SONG_REMOVED: [u8; 4] = [0x59, 0xd2, 0x38, 0x66]; // isSongRemoved(address,uint256)
 
 // Helper functions for storage keys
 fn get_dj_key(dj_address: &[u8; 20]) -> [u8; 32] {
@@ -319,9 +319,28 @@ fn remove_song(song_id: u32) {
     let removed_key = get_song_removed_key(&origin, song_id);
     save_bool(&removed_key, true);
     
-    // Clear votes for this song
-    let votes_key = get_votes_key(&origin, song_id);
-    save_u32(&votes_key, 0);
+    // Don't clear votes - preserve them for historical purposes
+    // let votes_key = get_votes_key(&origin, song_id);
+    // save_u32(&votes_key, 0);
+}
+
+// Universal remover function - any registered DJ can remove any song
+fn remove_song_universal(dj_address: [u8; 20], song_id: u32) {
+    let origin = get_origin();
+    
+    // Only registered DJs can use this function
+    assert!(get_bool(&get_dj_key(&origin)), "NOT_DJ");
+    
+    // Check that the target DJ exists
+    assert!(get_bool(&get_dj_key(&dj_address)), "TARGET_NOT_DJ");
+    
+    // Check that the song exists
+    let song_key = get_song_key(&dj_address, song_id);
+    assert!(get_string(&song_key).is_some(), "SONG_NOT_FOUND");
+    
+    // Mark song as removed
+    let removed_key = get_song_removed_key(&dj_address, song_id);
+    save_bool(&removed_key, true);
 }
 
 fn is_song_removed(dj_address: [u8; 20], song_id: u32) -> bool {
@@ -501,28 +520,7 @@ fn get_all_djs() -> Vec<[u8; 20]> {
     djs
 }
 
-// Enhanced getter functions
-fn get_songs_with_votes(dj_address: [u8; 20]) -> Vec<(u32, Vec<u8>, u32)> {
-    assert!(is_set_active(dj_address), "SET_NOT_ACTIVE");
-    
-    let song_count = get_song_count(dj_address);
-    let mut songs = Vec::new();
-    
-    for i in 0..song_count {
-        // Skip removed songs
-        if is_song_removed(dj_address, i) {
-            continue;
-        }
-        
-        let song = get_song(dj_address, i);
-        let votes = get_votes(dj_address, i);
-        songs.push((i, song, votes));
-    }
-    
-    songs
-}
-
-// Get historical songs with votes (works for inactive sets too)
+// Get all songs with votes (works for both active and inactive sets)
 fn get_all_songs_with_votes(dj_address: [u8; 20]) -> Vec<(u32, Vec<u8>, u32)> {
     let song_count = get_song_count(dj_address);
     let mut songs = Vec::new();
@@ -538,17 +536,6 @@ fn get_all_songs_with_votes(dj_address: [u8; 20]) -> Vec<(u32, Vec<u8>, u32)> {
         songs.push((i, song, votes));
     }
     
-    songs
-}
-
-fn get_top_songs(dj_address: [u8; 20], limit: u32) -> Vec<(u32, Vec<u8>, u32)> {
-    let mut songs = get_songs_with_votes(dj_address);
-    
-    // Sort by votes descending
-    songs.sort_by(|a, b| b.2.cmp(&a.2));
-    
-    // Take only the top 'limit' songs
-    songs.truncate(limit as usize);
     songs
 }
 
@@ -790,45 +777,6 @@ fn dispatch(selector: [u8; 4], data: &[u8]) {
                 .collect();
             api::return_value(ReturnFlags::empty(), &encode(&[Token::Array(addresses)]));
         },
-        SELECTOR_GET_SONGS_WITH_VOTES => {
-            let decoded = decode(&[ParamType::Address], data)
-                .expect("Failed to decode params");
-            let mut dj_address = [0u8; 20];
-            if let Token::Address(addr) = &decoded[0] {
-                dj_address.copy_from_slice(&addr.0);
-            }
-            let songs = get_songs_with_votes(dj_address);
-            let result: Vec<Token> = songs.iter()
-                .map(|(id, name, votes)| Token::Tuple(vec![
-                    Token::Uint((*id).into()),
-                    Token::String(String::from_utf8_lossy(name).into_owned()),
-                    Token::Uint((*votes).into())
-                ]))
-                .collect();
-            api::return_value(ReturnFlags::empty(), &encode(&[Token::Array(result)]));
-        },
-        SELECTOR_GET_TOP_SONGS => {
-            let decoded = decode(&[ParamType::Address, ParamType::Uint(256)], data)
-                .expect("Failed to decode params");
-            let mut dj_address = [0u8; 20];
-            if let Token::Address(addr) = &decoded[0] {
-                dj_address.copy_from_slice(&addr.0);
-            }
-            let limit = if let Token::Uint(l) = &decoded[1] {
-                l.as_u32()
-            } else {
-                10 // default limit
-            };
-            let songs = get_top_songs(dj_address, limit);
-            let result: Vec<Token> = songs.iter()
-                .map(|(id, name, votes)| Token::Tuple(vec![
-                    Token::Uint((*id).into()),
-                    Token::String(String::from_utf8_lossy(name).into_owned()),
-                    Token::Uint((*votes).into())
-                ]))
-                .collect();
-            api::return_value(ReturnFlags::empty(), &encode(&[Token::Array(result)]));
-        },
         SELECTOR_SET_DJ_METADATA => {
             let decoded = decode(&[ParamType::Address, ParamType::String], data)
                 .expect("Failed to decode params");
@@ -880,6 +828,21 @@ fn dispatch(selector: [u8; 4], data: &[u8]) {
                 panic!("Invalid song ID");
             };
             remove_song(song_id);
+            api::return_value(ReturnFlags::empty(), &encode(&[Token::Bool(true)]));
+        },
+        SELECTOR_REMOVE_SONG_UNIVERSAL => {
+            let decoded = decode(&[ParamType::Address, ParamType::Uint(256)], data)
+                .expect("Failed to decode params");
+            let mut dj_address = [0u8; 20];
+            if let Token::Address(addr) = &decoded[0] {
+                dj_address.copy_from_slice(&addr.0);
+            }
+            let song_id = if let Token::Uint(id) = &decoded[1] {
+                id.as_u32()
+            } else {
+                panic!("Invalid song ID");
+            };
+            remove_song_universal(dj_address, song_id);
             api::return_value(ReturnFlags::empty(), &encode(&[Token::Bool(true)]));
         },
         SELECTOR_SUGGEST_SONG => {
@@ -945,6 +908,21 @@ fn dispatch(selector: [u8; 4], data: &[u8]) {
             };
             unvote(dj_address, song_id);
             api::return_value(ReturnFlags::empty(), &encode(&[Token::Bool(true)]));
+        },
+        SELECTOR_IS_SONG_REMOVED => {
+            let decoded = decode(&[ParamType::Address, ParamType::Uint(256)], data)
+                .expect("Failed to decode params");
+            let mut dj_address = [0u8; 20];
+            if let Token::Address(addr) = &decoded[0] {
+                dj_address.copy_from_slice(&addr.0);
+            }
+            let song_id = if let Token::Uint(id) = &decoded[1] {
+                id.as_u32()
+            } else {
+                panic!("Invalid song ID");
+            };
+            let is_removed = is_song_removed(dj_address, song_id);
+            api::return_value(ReturnFlags::empty(), &encode(&[Token::Bool(is_removed)]));
         },
         _ => {
             // Unknown selector - handle as fallback

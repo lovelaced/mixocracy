@@ -77,6 +77,16 @@ if [ "$1" = "--prod" ]; then
     check_and_set_env "NEXT_PUBLIC_SPOTIFY_REDIRECT_URI"
     check_and_set_env "SPOTIFY_CLIENT_SECRET"
     
+    # Check for hot wallet configuration (optional - warn if not set)
+    if grep -q "^HOT_WALLET_PRIVATE_KEY=" .env.production; then
+        echo "⚠️  WARNING: HOT_WALLET_PRIVATE_KEY found in .env.production"
+        echo "   For security, set this directly in Vercel dashboard instead"
+        # Don't automatically upload the private key
+    else
+        echo "ℹ️  HOT_WALLET_PRIVATE_KEY not found in .env.production"
+        echo "   Please set it manually in Vercel dashboard for automatic song removal"
+    fi
+    
     echo ""
     echo "✅ Environment variables configured!"
     echo ""
