@@ -70,6 +70,8 @@ if [ "$1" = "--prod" ]; then
     
     # Set environment variables if they don't exist
     echo ""
+    check_and_set_env "NEXT_PUBLIC_NETWORK"
+    check_and_set_env "NEXT_PUBLIC_MIXOCRACY_CONTRACT_ADDRESS"
     check_and_set_env "NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID"
     check_and_set_env "NEXT_PUBLIC_SPOTIFY_CLIENT_ID"
     check_and_set_env "NEXT_PUBLIC_SPOTIFY_REDIRECT_URI"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useAccount } from 'wagmi';
@@ -101,8 +101,9 @@ export default function Home() {
     if (!address || !contract.hasProvider || !contract.isDj) return;
     
     try {
-      // Check if owner (hardcoded from deployment)
-      const isOwnerAddress = address.toLowerCase() === '0x953701ef658cf531dad9e23e5ef32dda6d6a4467';
+      // Check if owner (from environment variable)
+      const ownerAddress = process.env.NEXT_PUBLIC_MIXOCRACY_OWNER_ADDRESS?.toLowerCase() || '0x953701ef658cf531dad9e23e5ef32dda6d6a4467';
+      const isOwnerAddress = address.toLowerCase() === ownerAddress;
       setIsOwner(isOwnerAddress);
       
       // Check if DJ
@@ -143,7 +144,38 @@ export default function Home() {
       } else {
         // Normal flow for active DJs
         try {
-          const songList = await contract.getSongsWithVotes(djAddress);
+          // Check if DJ is actually active before using getSongsWithVotes
+          if (!activeDjs.includes(djAddress)) {
+            console.error('Attempting to load songs for inactive DJ:', djAddress);
+            setSongs([]);
+            return;
+          }
+          
+          let songList: Song[];
+          try {
+            songList = await contract.getSongsWithVotes(djAddress);
+          } catch (getSongsError) {
+            // Silently fall back to manual loading when getSongsWithVotes fails
+            // This can happen when the contract's voting data is in an inconsistent state
+            
+            // Fallback to manual loading
+            const songCount = await contract.getSongCount(djAddress);
+            songList = [];
+            
+            for (let i = 0; i < songCount; i++) {
+              const name = await contract.getSong(djAddress, i);
+              if (!name || name.trim() === '') {
+                continue;
+              }
+              let votes = 0;
+              try {
+                votes = await contract.getVotes(djAddress, i);
+              } catch {
+                // Default to 0 votes if can't get them
+              }
+              songList.push({ id: i, name, votes });
+            }
+          }
           
           // Apply optimistic votes
           const songsWithOptimisticVotes = songList.map(song => {
@@ -273,6 +305,12 @@ export default function Home() {
     setLoadingSongs(prev => new Set(prev).add(songId));
     
     try {
+      console.log('Attempting to vote:', { 
+        targetDj, 
+        songId, 
+        voter: address,
+        contractAddress: MIXOCRACY_CONTRACT_ADDRESS 
+      });
       const tx = await contract.vote(targetDj, songId);
       
       // Transaction submitted - update UI immediately
@@ -490,9 +528,11 @@ export default function Home() {
       setSelectedSpotifyTrack(null);
       setShowAddSongModal(false);
       
-      // Reload songs for the target DJ
+      // Reload songs for the target DJ after a small delay
       if (targetDj) {
-        loadSongs(targetDj);
+        setTimeout(() => {
+          loadSongs(targetDj);
+        }, 500);
       }
     } catch (error) {
       toast.error(truncateError(error) || 'Failed to add song');
@@ -618,7 +658,7 @@ export default function Home() {
                 </div>
                 <h3 className="font-semibold mb-xs">DJs GO LIVE</h3>
                 <p className="text-tertiary text-xs">
-                  DJs start sets and upload tracks for voting
+                  DJ enables track suggestions and voting
                 </p>
               </div>
               

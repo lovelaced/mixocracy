@@ -25,7 +25,6 @@ export function DjPlayer({ songs, isLive, onSpotifyConnect, onPlayedTracksChange
     pause,
     resume,
     transferPlayback,
-    totalQueueSize,
     playedCount,
     playedTracksSet
   } = useSpotifyPlayer(songs, isLive);

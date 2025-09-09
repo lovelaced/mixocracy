@@ -2,6 +2,7 @@
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import Image from 'next/image';
+import { activeChain } from '@/lib/web3-config';
 
 export const CustomConnectButton = () => {
   return (
@@ -51,9 +52,10 @@ export const CustomConnectButton = () => {
                       if (typeof window !== 'undefined' && window.ethereum) {
                         try {
                           // First try to switch to the network
+                          const chainIdHex = `0x${activeChain.id.toString(16)}`;
                           await window.ethereum.request({
                             method: 'wallet_switchEthereumChain',
-                            params: [{ chainId: '0x190f1b45' }], // 420420421 in hex
+                            params: [{ chainId: chainIdHex }],
                           });
                         } catch (switchError) {
                           // This error code indicates that the chain has not been added to MetaMask
@@ -63,15 +65,11 @@ export const CustomConnectButton = () => {
                                 method: 'wallet_addEthereumChain',
                                 params: [
                                   {
-                                    chainId: '0x190f1b45',
-                                    chainName: 'Westend Asset Hub',
-                                    nativeCurrency: {
-                                      name: 'WND',
-                                      symbol: 'WND',
-                                      decimals: 18,
-                                    },
-                                    rpcUrls: ['https://westend-asset-hub-eth-rpc.polkadot.io'],
-                                    blockExplorerUrls: ['https://blockscout-asset-hub.parity-chains-scw.parity.io'],
+                                    chainId: `0x${activeChain.id.toString(16)}`,
+                                    chainName: activeChain.name,
+                                    nativeCurrency: activeChain.nativeCurrency,
+                                    rpcUrls: activeChain.rpcUrls.default.http,
+                                    blockExplorerUrls: [activeChain.blockExplorers?.default.url],
                                   },
                                 ],
                               });
@@ -87,7 +85,7 @@ export const CustomConnectButton = () => {
                     type="button" 
                     className="btn btn-primary"
                   >
-                    Add Westend Network
+                    Add {activeChain.name}
                   </button>
                 );
               }
